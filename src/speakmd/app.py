@@ -3,16 +3,18 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import asyncio
 import json
 import os
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .jobs import JobManager
 from .monitor import ResourceMonitor
+from .preview import sample_catalog
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -110,6 +112,34 @@ async def retry_job(job_id: str):
         raise HTTPException(status_code=404, detail="Job not found") from exc
     except ValueError as exc:
         raise api_error(exc) from exc
+
+
+@app.get("/api/preview")
+async def preview_samples():
+    return sample_catalog()
+
+
+@app.post("/api/preview")
+async def create_preview(request: Request):
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="preview settings must be an object")
+    try:
+        return await asyncio.to_thread(
+            manager().preview,
+            payload,
+            payload.get("text"),
+            payload.get("sample_id"),
+        )
+    except ValueError as exc:
+        raise api_error(exc) from exc
+    except TimeoutError as exc:
+        raise HTTPException(status_code=504, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.get("/api/metrics")

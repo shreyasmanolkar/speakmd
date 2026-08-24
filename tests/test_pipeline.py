@@ -4,9 +4,12 @@ from pathlib import Path
 import shutil
 import time
 
+import pytest
+
 from speakmd.chunking import plan_chunks
 from speakmd.jobs import JobManager
 from speakmd.markdown_speech import narrate_markdown
+from speakmd.preview import PREVIEW_MAX_CHARS, sample_catalog
 
 
 def wait_for(manager: JobManager, job_id: str, predicate, timeout: float = 8):
@@ -126,3 +129,75 @@ def test_pause_resume_survives_restart_without_regenerating_completed_chunks(tmp
             assert complete["chunk_states"][number]["attempts"] == attempts
     finally:
         recovered.shutdown()
+
+
+def test_sample_catalog_fits_preview_limit():
+    catalog = sample_catalog()
+    assert catalog["default_id"] == "narration"
+    assert {sample["id"] for sample in catalog["samples"]} == {
+        "narration",
+        "conversation",
+        "numbers",
+        "instruction",
+    }
+    for sample in catalog["samples"]:
+        assert 0 < len(sample["text"]) <= catalog["max_chars"]
+        assert catalog["max_chars"] == PREVIEW_MAX_CHARS
+
+
+def test_voice_preview_writes_wav_and_reuses_cache(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("SPEAKMD_TTS_BACKEND", "tone")
+    manager = JobManager(tmp_path)
+    try:
+        first = manager.preview({"voice": "af_heart", "speed": 1.0, "device": "cpu"})
+        assert first["cached"] is False
+        assert first["voice"] == "af_heart"
+        assert "morning light" in first["text"]
+        wav = tmp_path / first["audio"]
+        assert wav.exists()
+        assert wav.stat().st_size > 44
+        second = manager.preview({"voice": "af_heart", "speed": 1.0, "device": "cpu"})
+        assert second["cached"] is True
+        assert second["audio"] == first["audio"]
+        conversation = manager.preview({"voice": "af_heart"}, sample_id="conversation")
+        assert "Can you hear me" in conversation["text"]
+        custom = manager.preview({"voice": "bf_emma"}, text="Hello from Emma.")
+        assert custom["text"] == "Hello from Emma."
+        assert custom["audio"] != first["audio"]
+        assert (tmp_path / custom["audio"]).exists()
+    finally:
+        manager.shutdown()
+
+
+def test_voice_preview_rejects_invalid_text(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("SPEAKMD_TTS_BACKEND", "tone")
+    manager = JobManager(tmp_path)
+    try:
+        with pytest.raises(ValueError, match="empty"):
+            manager.preview({}, text="   ")
+        with pytest.raises(ValueError, match="limited"):
+            manager.preview({}, text="x" * (PREVIEW_MAX_CHARS + 1))
+        with pytest.raises(ValueError, match="unknown sample"):
+            manager.preview({}, sample_id="not-a-sample")
+        with pytest.raises(ValueError, match="voice"):
+            manager.preview({"voice": "not-a-voice"}, text="Hello.")
+    finally:
+        manager.shutdown()
+
+
+def test_voice_preview_refuses_while_a_job_is_active(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("SPEAKMD_TTS_BACKEND", "tone")
+    monkeypatch.setenv("SPEAKMD_TONE_DELAY", "0.05")
+    markdown = (
+        "# Long report\n\n"
+        + "This is a complete sentence with enough words to narrate naturally. " * 5
+        + "\n\n"
+    ) * 15
+    manager = JobManager(tmp_path)
+    try:
+        job, _ = manager.create_job("long-report.md", markdown.encode(), {"max_chars": 180})
+        wait_for(manager, job["id"], lambda item: item["state"] == "processing")
+        with pytest.raises(ValueError, match="speech worker is busy"):
+            manager.preview({"voice": "af_heart"}, text="Hello from a busy worker.")
+    finally:
+        manager.shutdown()

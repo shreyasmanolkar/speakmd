@@ -7,6 +7,7 @@ restart a valid WAV whose state update was interrupted is safely recovered.
 
 from __future__ import annotations
 
+from concurrent.futures import Future
 from copy import deepcopy
 from datetime import UTC, datetime
 import hashlib
@@ -22,6 +23,7 @@ from typing import Any
 from .audio import combine_wav_chunks, encode_mp3, valid_wav, write_wav_atomic
 from .chunking import CHUNKING_VERSION, DEFAULT_MAX_CHARS, chunks_as_dicts, plan_chunks
 from .markdown_speech import narrate_markdown
+from .preview import VoicePreviewRequest, resolve_preview_text
 from .tts import make_renderer
 
 
@@ -92,7 +94,7 @@ class JobManager:
     def __init__(self, output_root: Path) -> None:
         self.output_root = Path(output_root).resolve()
         self.store = JobStore(self.output_root)
-        self._queue: queue.Queue[str] = queue.Queue()
+        self._queue: queue.Queue[Any] = queue.Queue()
         self._enqueued: set[str] = set()
         self._controls: dict[str, str] = {}
         self._lock = threading.RLock()
@@ -206,6 +208,52 @@ class JobManager:
             "chunking_version": CHUNKING_VERSION,
         }
 
+    def preview(self, settings: dict[str, Any], text: str | None = None, sample_id: str | None = None) -> dict[str, Any]:
+        """Synthesize a short voice sample on the same worker that renders documents."""
+        clean = self._validate_settings(settings)
+        sample = resolve_preview_text(sample_id, text)
+        key = sha256_bytes(
+            json.dumps({"text": sample, "voice": clean["voice"], "speed": clean["speed"]}, sort_keys=True).encode()
+        )
+        relative = f"previews/{clean['voice']}-{key[:12]}.wav"
+        path = self.output_root / relative
+        if valid_wav(path):
+            return {
+                "audio": relative,
+                "text": sample,
+                "voice": clean["voice"],
+                "speed": clean["speed"],
+                "cached": True,
+            }
+        future: Future = Future()
+        request = VoicePreviewRequest(
+            text=sample,
+            voice=clean["voice"],
+            speed=clean["speed"],
+            device=clean["device"],
+            path=path,
+            future=future,
+        )
+        with self._lock:
+            if self._active_job or self._enqueued:
+                raise ValueError(
+                    "The speech worker is busy. Pause or wait until it finishes, then preview the voice."
+                )
+            self._queue.put(request)
+        try:
+            future.result(timeout=300)
+        except TimeoutError as exc:
+            raise TimeoutError("Voice preview timed out while waiting for the speech worker") from exc
+        if not valid_wav(path):
+            raise RuntimeError("Voice preview did not produce audio")
+        return {
+            "audio": relative,
+            "text": sample,
+            "voice": clean["voice"],
+            "speed": clean["speed"],
+            "cached": False,
+        }
+
     def get(self, job_id: str) -> dict[str, Any]:
         return self.summary(self.store.load(job_id))
 
@@ -308,6 +356,19 @@ class JobManager:
                 continue
             if not job_id:
                 continue
+            if isinstance(job_id, VoicePreviewRequest):
+                with self._lock:
+                    self._active_job = "preview"
+                try:
+                    self._run_preview(job_id)
+                except Exception as exc:  # Last-resort guard: the worker must not die.
+                    if not job_id.future.done():
+                        job_id.future.set_exception(exc)
+                finally:
+                    with self._lock:
+                        self._active_job = None
+                    self._queue.task_done()
+                continue
             with self._lock:
                 self._enqueued.discard(job_id)
                 self._active_job = job_id
@@ -364,6 +425,19 @@ class JobManager:
             self._renderer = make_renderer(device)
             self._renderer_device = device
         return self._renderer
+
+    def _run_preview(self, request: VoicePreviewRequest) -> None:
+        try:
+            if not valid_wav(request.path):
+                renderer = self._renderer_for(request.device)
+                audio = renderer.synthesize(request.text, request.voice, request.speed)
+                write_wav_atomic(request.path, audio, renderer.sample_rate)
+            if not request.future.done():
+                request.future.set_result(request.path)
+        except Exception as exc:
+            if not request.future.done():
+                request.future.set_exception(exc)
+            raise
 
     def _reconcile_checkpoints(self, job: dict[str, Any]) -> None:
         directory = self.store.path(job["id"])

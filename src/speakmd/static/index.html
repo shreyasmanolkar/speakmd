@@ -10,7 +10,7 @@
     main { width:min(1080px,calc(100% - 32px)); margin:32px auto 64px; } h1 { margin:0; letter-spacing:-.04em; font-size:clamp(2rem,5vw,3.4rem); } h2 { font-size:1.08rem; margin:0 0 12px; } p { color:var(--muted); margin:6px 0 20px; }
     .grid { display:grid; grid-template-columns:1.1fr .9fr; gap:16px; } .card { background:color-mix(in srgb,var(--panel) 95%,black); border:1px solid var(--line); border-radius:14px; padding:18px; box-shadow:0 12px 40px #0002; }
     .drop { min-height:160px; display:grid; place-items:center; text-align:center; border:2px dashed #48627e; cursor:pointer; transition:.15s; } .drop.drag { border-color:var(--accent); background:#173329; } .drop strong { color:var(--accent); } input[type=file] { display:none; }
-    .settings { display:grid; grid-template-columns:1fr 1fr; gap:11px; } label { color:var(--muted); font-size:.83rem; } select,input { width:100%; margin-top:4px; padding:8px; background:#0f1720; border:1px solid #435368; border-radius:7px; color:var(--text); }
+    .settings { display:grid; grid-template-columns:1fr 1fr; gap:11px; } label { color:var(--muted); font-size:.83rem; } select,input,textarea { width:100%; margin-top:4px; padding:8px; background:#0f1720; border:1px solid #435368; border-radius:7px; color:var(--text); font:inherit; } textarea { min-height:92px; resize:vertical; line-height:1.45; } .wide { grid-column:1 / -1; } .sample-head { display:flex; justify-content:space-between; gap:8px; align-items:baseline; } audio { width:100%; margin-top:10px; height:36px; }
     button { appearance:none; padding:9px 12px; color:#07150f; background:var(--accent); border:0; border-radius:8px; cursor:pointer; font-weight:700; } button.secondary { background:#34475e; color:var(--text); } button.danger { background:#7a3538; color:#fff; } button:disabled { opacity:.42; cursor:not-allowed; }
     .actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:16px; } .status-head { display:flex; justify-content:space-between; gap:8px; align-items:center; } .pill { padding:3px 9px; border:1px solid #50647c; border-radius:999px; color:var(--muted); white-space:nowrap; } .pill.processing,.pill.resuming { color:#072019;background:var(--accent);border-color:var(--accent); } .pill.completed { color:#bff8df; border-color:#4b9875; } .pill.failed,.pill.cancelled { color:#ffc4bf;border-color:#a95858; } .pill.paused { color:#ffe8a1;border-color:#ab8c45; }
     .bar { height:11px; overflow:hidden; background:#0c1118; border:1px solid #3b4b5d; border-radius:999px; margin:13px 0 9px; } .bar > div { height:100%; width:0; background:linear-gradient(90deg,#54bf91,var(--accent)); transition:width .2s; }
@@ -45,8 +45,17 @@
           <label>Chunk size
             <select id="max-chars"><option value="300">300 characters (safer)</option><option value="360" selected>360 characters (recommended)</option><option value="420">420 characters (fewer seams)</option></select>
           </label>
+          <label class="wide">Sample
+            <select id="sample-id"><option value="narration">Narration</option></select>
+          </label>
+          <label class="wide"><span class="sample-head">Sample text <span id="sample-count" class="tiny">0 / 800</span></span>
+            <textarea id="sample-text" maxlength="800" placeholder="Short copy for auditioning the selected voice"></textarea>
+          </label>
         </div>
-        <div class="actions"><button id="start" disabled>Start conversion</button></div>
+        <p class="tiny" style="margin:10px 0 0">Preview speaks this text with the selected voice. Pause an active document first.</p>
+        <div class="actions"><button id="preview" class="secondary" type="button">Preview voice</button><button id="start" disabled>Start conversion</button></div>
+        <div id="preview-status" class="tiny" style="margin-top:8px"></div>
+        <audio id="preview-audio" controls preload="none"></audio>
       </div>
     </section>
 
@@ -69,7 +78,10 @@
   </main>
   <script>
     const el = id => document.getElementById(id);
-    let selectedFile = null, currentJob = null, poller = null, metricPoller = null;
+    let selectedFile = null, currentJob = null, poller = null, metricPoller = null, previewing = false, jobState = 'idle', samples = [];
+    const busyStates = ['queued','preparing','parsing_markdown','processing','resuming'];
+    const setPreviewEnabled = () => { el('preview').disabled = previewing || busyStates.includes(jobState); };
+    const updateSampleCount = () => { el('sample-count').textContent = `${el('sample-text').value.length} / ${el('sample-text').maxLength || 800}`; };
     const setMessage = (id, text) => { const node=el(id); node.textContent=text||''; node.classList.toggle('show',Boolean(text)); };
     const fileUrl = path => '/files/' + path.split('/').map(encodeURIComponent).join('/');
     const fmtSeconds = value => { if (value == null) return 'estimating…'; const s=Math.max(0,Math.round(value)); return s>=60 ? `${Math.floor(s/60)}m ${s%60}s` : `${s}s`; };
@@ -92,7 +104,8 @@
     function render(job) {
       currentJob=job.id; const p=job.progress||{}; const state=(job.state||'idle').toLowerCase(); el('document').textContent=job.document_name||'No document selected'; el('state').textContent=(job.state||'Idle').replaceAll('_',' '); el('state').className=`pill ${state}`; el('stage').textContent=job.stage||'';
       el('bar').style.width=`${p.percentage||0}%`; el('progress').textContent=`${p.completed||0} / ${p.total||0} chunks · ${p.percentage||0}% · rendered ${fmtSeconds(p.render_seconds||0)} · ETA ${fmtSeconds(p.eta_seconds)}`;
-      const queue=job.queue||{}; el('queue').textContent=`Queue: ${queue.active_job===job.id?'this document is active':queue.active_job?'another document is active':'no active document'} · ${queue.waiting||0} waiting`;
+      jobState=state; setPreviewEnabled();
+      const queue=job.queue||{}; const active=queue.active_job; el('queue').textContent=`Queue: ${active===job.id?'this document is active':active==='preview'?'a voice preview is active':active?'another document is active':'no active document'} · ${queue.waiting||0} waiting`;
       el('current').textContent=job.current_chunk_text ? `Chunk ${p.current} of ${p.total}: ${job.current_chunk_text}` : (job.stage||'Nothing is being processed.');
       setMessage('error',job.error); setMessage('warning',(job.warnings||[]).join(' '));
       el('pause').disabled=state!=='processing'; el('resume').disabled=state!=='paused'; el('cancel').disabled=!['queued','preparing','parsing_markdown','processing','resuming','paused'].includes(state); el('retry').disabled=state!=='failed';
@@ -102,7 +115,30 @@
     async function pollJob() { if(!currentJob) return; try { const job=await request(`/api/jobs/${currentJob}`); render(job); if(['completed','cancelled','failed','paused'].includes(job.state)) clearInterval(poller); } catch(error) { setMessage('error',error.message); clearInterval(poller); } }
     function beginPolling() { clearInterval(poller); pollJob(); poller=setInterval(pollJob,1000); }
     async function metrics() { try { const data=await request('/api/metrics'); el('cpu').textContent=`${data.cpu_percent.toFixed(0)}%`; el('ram').textContent=`${data.ram.percent.toFixed(0)}%`; if(data.gpu.available) { const g=data.gpu.devices[0]; el('gpu').textContent=`${g.utilization_percent.toFixed(0)}%`; el('gpu-detail').textContent=`${g.name} · ${g.memory_used_mib.toFixed(0)} / ${g.memory_total_mib.toFixed(0)} MiB`; } else { el('gpu').textContent='Unavailable'; el('gpu-detail').textContent=data.gpu.reason||''; } } catch (_) {} }
-    async function restore() { await metrics(); metricPoller=setInterval(metrics,2000); try { const data=await request('/api/jobs'); const job=data.jobs[0]; if(job) { render(job); if(!['completed','cancelled','failed','paused'].includes(job.state)) beginPolling(); } } catch (_) {} }
+    el('sample-id').addEventListener('change', () => { const sample=samples.find(item=>item.id===el('sample-id').value); if(sample) el('sample-text').value=sample.text; updateSampleCount(); });
+    el('sample-text').addEventListener('input', updateSampleCount);
+    el('preview').addEventListener('click', async () => {
+      previewing=true; setPreviewEnabled(); el('preview-status').textContent='Generating a short voice sample…';
+      try {
+        const result=await request('/api/preview',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...settings(),text:el('sample-text').value,sample_id:el('sample-id').value})});
+        const audio=el('preview-audio'); audio.src=fileUrl(result.audio)+'?t='+Date.now(); el('preview-status').textContent=result.cached?'Replayed a saved sample for this voice and text.':''; await audio.play().catch(()=>{});
+      } catch(error) { el('preview-status').textContent=error.message; }
+      finally { previewing=false; setPreviewEnabled(); }
+    });
+    async function loadSamples() {
+      try {
+        const data=await request('/api/preview');
+        samples=data.samples||[];
+        el('sample-text').maxLength=data.max_chars||800;
+        el('sample-id').innerHTML=samples.map(sample=>`<option value="${sample.id}">${sample.label}</option>`).join('');
+        const initial=samples.find(sample=>sample.id===data.default_id)||samples[0];
+        if(initial) { el('sample-id').value=initial.id; el('sample-text').value=initial.text; }
+      } catch (_) {
+        el('sample-text').value='This is a short voice test. Please listen for clarity, pace, and natural pauses.';
+      }
+      updateSampleCount();
+    }
+    async function restore() { await loadSamples(); await metrics(); metricPoller=setInterval(metrics,2000); try { const data=await request('/api/jobs'); const job=data.jobs[0]; if(job) { render(job); if(!['completed','cancelled','failed','paused'].includes(job.state)) beginPolling(); } } catch (_) {} }
     restore();
   </script>
 </body>
