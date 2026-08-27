@@ -48,6 +48,11 @@ async def index() -> FileResponse:
     return FileResponse(STATIC_ROOT / "index.html")
 
 
+@app.get("/learn", include_in_schema=False)
+async def learning_guide() -> FileResponse:
+    return FileResponse(STATIC_ROOT / "learning.html")
+
+
 @app.post("/api/jobs")
 async def upload_markdown(file: UploadFile = File(...), settings: str = Form("{}")):
     filename = file.filename or "document.md"
@@ -162,4 +167,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

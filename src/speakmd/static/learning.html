@@ -1,0 +1,606 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="An interactive visual guide to how SpeakMD turns Markdown into durable, local speech.">
+  <meta name="theme-color" content="#f5f5f0">
+  <title>Inside SpeakMD — a visual system guide</title>
+  <style>
+    /* Design tokens --------------------------------------------------- */
+    :root {
+      color-scheme: light;
+      --canvas: #f5f5f0; --canvas-2: #eceee8; --surface: #fffefb;
+      --ink: #15221d; --ink-2: #2e3d36; --muted: #62716a; --muted-2: #4d5d56;
+      --line: #d8ded9; --line-2: #bcc8c0;
+      --accent: #14785d; --accent-2: #0d5f49; --accent-soft: #d9f1e7; --accent-pale: #f0faf6;
+      --amber: #a65f12; --amber-soft: #fff0d7; --violet: #6555b8; --violet-soft: #eeeafe;
+      --danger: #aa3d43; --danger-soft: #fee9e8; --navy: #142720; --white: #fff;
+      --shadow-sm: 0 1px 2px rgba(19,39,31,.06), 0 7px 22px rgba(19,39,31,.05);
+      --shadow-md: 0 20px 56px rgba(19,39,31,.12);
+      --r-sm: 10px; --r-md: 18px; --r-lg: 28px; --max: 1180px; --read: 690px;
+      --nav: 68px; --ease: cubic-bezier(.2,.8,.2,1);
+    }
+    html[data-theme="dark"] {
+      color-scheme: dark;
+      --canvas: #101813; --canvas-2: #17201a; --surface: #18231d;
+      --ink: #eef6f1; --ink-2: #d7e3dc; --muted: #a4b3aa; --muted-2: #bdc9c1;
+      --line: #314039; --line-2: #465a50;
+      --accent: #5fd0a7; --accent-2: #8de3c3; --accent-soft: #1b493a; --accent-pale: #173127;
+      --amber: #f0b35f; --amber-soft: #4b351b; --violet: #b6a8ff; --violet-soft: #322d50;
+      --danger: #ff9c9d; --danger-soft: #482729; --navy: #0c1712;
+      --shadow-sm: 0 8px 24px rgba(0,0,0,.14); --shadow-md: 0 20px 56px rgba(0,0,0,.3);
+    }
+
+    /* Base ------------------------------------------------------------ */
+    *,*::before,*::after{box-sizing:border-box}
+    html{scroll-behavior:smooth;scroll-padding-top:calc(var(--nav) + 26px)}
+    body{margin:0;background:var(--canvas);color:var(--ink);font:16px/1.6 Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+    body::before{position:fixed;inset:0;z-index:-1;pointer-events:none;content:"";background:radial-gradient(circle at 8% 2%,color-mix(in srgb,var(--accent-soft) 60%,transparent),transparent 27rem),radial-gradient(circle at 96% 28%,color-mix(in srgb,var(--violet-soft) 42%,transparent),transparent 24rem)}
+    button,input{font:inherit}button,a{-webkit-tap-highlight-color:transparent}button{color:inherit}a{color:inherit}svg{display:block;max-width:100%}
+    h1,h2,h3,h4,p{margin-top:0}h1,h2,h3,h4{color:var(--ink);line-height:1.12;text-wrap:balance}
+    h1{margin-bottom:24px;font-size:clamp(3.1rem,7vw,6.8rem);letter-spacing:-.072em}
+    h2{margin-bottom:18px;font-size:clamp(2.15rem,4.7vw,4.35rem);letter-spacing:-.055em}
+    h3{margin-bottom:10px;font-size:clamp(1.15rem,2vw,1.42rem);letter-spacing:-.025em}
+    p{color:var(--muted)}::selection{background:var(--accent-soft);color:var(--ink)}
+    :focus-visible{outline:3px solid color-mix(in srgb,var(--accent) 70%,white);outline-offset:3px;border-radius:5px}
+    .skip{position:fixed;top:10px;left:12px;z-index:100;padding:10px 14px;transform:translateY(-150%);border-radius:8px;background:var(--ink);color:var(--surface);font-weight:700;text-decoration:none;transition:.2s}.skip:focus{transform:none}
+    .container{width:min(var(--max),calc(100% - 40px));margin-inline:auto}.section{padding:clamp(76px,10vw,138px) 0}.compact{padding:68px 0}
+    .dark-section{position:relative;overflow:hidden;background:var(--navy);color:#edf6f1}.dark-section::before{position:absolute;inset:0;pointer-events:none;content:"";background-image:radial-gradient(rgba(255,255,255,.09) 1px,transparent 1px);background-size:18px 18px;mask-image:linear-gradient(#000,transparent 94%)}
+    .dark-section h2,.dark-section h3{color:#f6fbf8}.dark-section p{color:#aebfb7}
+    .section-head{max-width:760px;margin-bottom:clamp(34px,5vw,62px)}.section-head.center{margin-inline:auto;text-align:center}.section-head p{max-width:var(--read);margin-bottom:0;font-size:clamp(1rem,2vw,1.18rem)}.section-head.center p{margin-inline:auto}
+    .eyebrow{display:inline-flex;align-items:center;gap:9px;margin-bottom:18px;color:var(--accent-2);font-size:.75rem;font-weight:800;letter-spacing:.12em;line-height:1;text-transform:uppercase}.eyebrow::before{width:22px;height:2px;background:currentColor;content:""}.dark-section .eyebrow,.dark-panel .eyebrow{color:#6fd8b1}
+    .mono,code,pre{font-family:"SFMono-Regular",Consolas,"Liberation Mono",monospace}code{padding:.12em .35em;border-radius:5px;background:var(--canvas-2);color:var(--ink-2);font-size:.87em}
+
+    /* Primitives ------------------------------------------------------ */
+    .card{border:1px solid var(--line);border-radius:var(--r-md);background:color-mix(in srgb,var(--surface) 96%,transparent);box-shadow:var(--shadow-sm)}
+    .button{display:inline-flex;min-height:46px;align-items:center;justify-content:center;gap:9px;padding:10px 17px;border:1px solid transparent;border-radius:11px;background:var(--accent);color:#fff;cursor:pointer;font-size:.91rem;font-weight:760;line-height:1;text-decoration:none;transition:transform .2s var(--ease),background .2s,border-color .2s,box-shadow .2s}.button:hover{transform:translateY(-2px);background:var(--accent-2);box-shadow:var(--shadow-sm)}.button.secondary{border-color:var(--line);background:var(--surface);color:var(--ink)}.button.secondary:hover{border-color:var(--line-2)}.button svg{width:17px;height:17px}.button-row{display:flex;flex-wrap:wrap;gap:10px}
+    .badge{display:inline-flex;align-items:center;gap:7px;padding:6px 10px;border:1px solid var(--line);border-radius:999px;background:color-mix(in srgb,var(--surface) 76%,transparent);color:var(--muted-2);font-size:.74rem;font-weight:750;line-height:1;white-space:nowrap}.badge.accent{border-color:color-mix(in srgb,var(--accent) 30%,var(--line));background:var(--accent-soft);color:var(--accent-2)}.badge.dark{border-color:rgba(255,255,255,.13);background:rgba(255,255,255,.07);color:#c7d8d0}.dot{width:7px;height:7px;border-radius:50%;background:currentColor;box-shadow:0 0 0 4px color-mix(in srgb,currentColor 14%,transparent)}
+    .icon{display:grid;width:42px;height:42px;place-items:center;flex:0 0 auto;border:1px solid color-mix(in srgb,var(--accent) 22%,var(--line));border-radius:12px;background:var(--accent-soft);color:var(--accent-2)}.icon svg{width:20px;height:20px}
+    .kicker{margin-bottom:7px;color:var(--muted);font-size:.72rem;font-weight:800;letter-spacing:.09em;text-transform:uppercase}
+    .segment-wrap{display:inline-flex;gap:4px;max-width:100%;padding:4px;overflow-x:auto;border:1px solid var(--line);border-radius:13px;background:var(--canvas-2);scrollbar-width:none}.segment-wrap::-webkit-scrollbar{display:none}.segment{min-height:38px;padding:8px 13px;border:0;border-radius:9px;background:transparent;color:var(--muted);cursor:pointer;font-size:.82rem;font-weight:760;white-space:nowrap;transition:.18s}.segment:hover{color:var(--ink)}.segment[aria-selected="true"],.segment[aria-pressed="true"]{background:var(--surface);color:var(--ink);box-shadow:var(--shadow-sm)}
+    .callout{display:flex;gap:13px;padding:17px 18px;border:1px solid color-mix(in srgb,var(--amber) 25%,var(--line));border-radius:14px;background:var(--amber-soft)}.callout-mark{display:grid;width:26px;height:26px;place-items:center;flex:0 0 auto;border-radius:50%;background:color-mix(in srgb,var(--amber) 18%,transparent);color:var(--amber);font-size:.78rem;font-weight:900}.callout strong{display:block;margin-bottom:2px;font-size:.9rem}.callout p{margin:0;font-size:.88rem}
+
+    /* Navigation ------------------------------------------------------ */
+    .site-head{position:sticky;top:0;z-index:50;height:var(--nav);border-bottom:1px solid color-mix(in srgb,var(--line) 82%,transparent);background:color-mix(in srgb,var(--canvas) 86%,transparent);backdrop-filter:blur(16px) saturate(150%)}
+    .scroll-line{position:absolute;right:0;bottom:-1px;left:0;height:2px}.scroll-line span{display:block;width:0;height:100%;background:var(--accent)}
+    .nav{display:flex;height:100%;align-items:center;justify-content:space-between;gap:18px}.brand{display:inline-flex;align-items:center;gap:10px;flex:0 0 auto;color:var(--ink);font-size:.92rem;font-weight:820;letter-spacing:-.02em;text-decoration:none}.brand-mark{display:flex;height:28px;align-items:center;gap:3px;padding-inline:7px;border-radius:8px;background:var(--ink)}.brand-mark i{display:block;width:2px;border-radius:3px;background:var(--surface)}.brand-mark i:nth-child(1),.brand-mark i:nth-child(5){height:7px}.brand-mark i:nth-child(2),.brand-mark i:nth-child(4){height:13px}.brand-mark i:nth-child(3){height:18px;background:var(--accent)}.brand-sub{color:var(--muted);font-weight:560}
+    .nav-links{display:flex;align-items:center;gap:2px}.nav-links a{padding:8px 10px;border-radius:8px;color:var(--muted);font-size:.78rem;font-weight:700;text-decoration:none;transition:.18s}.nav-links a:hover,.nav-links a[aria-current="true"]{background:var(--surface);color:var(--ink)}
+    .nav-actions{display:flex;align-items:center;gap:8px}.learn{display:inline-flex;align-items:center;gap:7px;color:var(--muted);font-size:.73rem;font-weight:720;white-space:nowrap}.learn-ring{display:grid;width:27px;height:27px;place-items:center;border-radius:50%;background:conic-gradient(var(--accent) var(--visited),var(--line) 0)}.learn-ring::after{width:19px;height:19px;border-radius:inherit;background:var(--canvas);content:""}
+    .icon-button{display:grid;width:36px;height:36px;place-items:center;border:1px solid var(--line);border-radius:9px;background:var(--surface);color:var(--ink);cursor:pointer}.icon-button:hover{border-color:var(--line-2)}.icon-button svg{width:17px;height:17px}.sun{display:none}html[data-theme="dark"] .sun{display:block}html[data-theme="dark"] .moon{display:none}
+
+    /* Hero ------------------------------------------------------------ */
+    .hero{padding:clamp(68px,8vw,112px) 0 48px}.hero-grid{display:grid;grid-template-columns:minmax(0,.92fr) minmax(460px,1.08fr);align-items:center;gap:clamp(40px,7vw,92px)}.hero-copy .badge{margin-bottom:24px}.hero-copy h1 span{color:var(--accent)}.hero-lede{max-width:630px;margin-bottom:30px;color:var(--muted-2);font-size:clamp(1.1rem,2vw,1.3rem);line-height:1.55}.hero-proof{display:flex;flex-wrap:wrap;gap:10px 18px;margin-top:25px;color:var(--muted);font-size:.8rem;font-weight:650}.hero-proof span{display:inline-flex;align-items:center;gap:7px}.hero-proof svg{width:15px;height:15px;color:var(--accent)}
+    .hero-viz{position:relative;min-height:520px;overflow:hidden;border:1px solid rgba(255,255,255,.09);border-radius:var(--r-lg);background:var(--navy);box-shadow:0 26px 80px rgba(14,33,25,.22);color:#f3f8f5}.hero-viz::before{position:absolute;inset:0;content:"";background:radial-gradient(circle at 70% 10%,rgba(72,205,157,.19),transparent 31%),radial-gradient(circle at 14% 92%,rgba(112,91,213,.16),transparent 30%)}
+    .viz-top{position:relative;display:flex;align-items:center;justify-content:space-between;padding:20px 22px;border-bottom:1px solid rgba(255,255,255,.09)}.window-dots{display:flex;gap:6px}.window-dots i{width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,.23)}.local{display:inline-flex;align-items:center;gap:7px;color:#9fbbb0;font-size:.7rem;font-weight:750;letter-spacing:.08em;text-transform:uppercase}.local::before{width:6px;height:6px;border-radius:50%;background:#6fd8b1;box-shadow:0 0 0 4px rgba(111,216,177,.11);content:""}
+    .viz-canvas{position:relative;display:grid;grid-template-columns:128px 1fr;gap:26px;padding:26px 26px 18px}.md-file{position:relative;min-height:216px;padding:20px 16px;border:1px solid rgba(255,255,255,.12);border-radius:14px;background:rgba(255,255,255,.06)}.md-corner{position:absolute;top:0;right:0;width:34px;height:34px;border-bottom:1px solid rgba(255,255,255,.11);border-left:1px solid rgba(255,255,255,.11);border-radius:0 14px 0 10px}.ext{margin-bottom:22px;color:#77dfb8;font:800 .76rem monospace}.file-line{height:5px;margin:10px 0;border-radius:10px;background:rgba(255,255,255,.14)}.file-line:nth-of-type(2){width:78%}.file-line:nth-of-type(3){width:90%}.file-line:nth-of-type(4){width:60%}.file-line:nth-of-type(5){width:84%}.file-meta{position:absolute;right:16px;bottom:15px;left:16px;color:#819b90;font-size:.65rem}
+    .mini-pipeline{display:flex;flex-direction:column;justify-content:center}.mini-step{position:relative;display:grid;grid-template-columns:26px 1fr auto;align-items:center;gap:10px;min-height:54px;padding:8px 10px;border-radius:11px;transition:.25s}.mini-step:not(:last-child)::after{position:absolute;bottom:-7px;left:22px;width:1px;height:14px;background:rgba(255,255,255,.12);content:""}.mini-step.active{transform:translateX(4px);background:rgba(111,216,177,.1)}.mini-num{display:grid;width:26px;height:26px;place-items:center;border:1px solid rgba(255,255,255,.14);border-radius:8px;color:#789086;font:400 .63rem monospace}.mini-step.active .mini-num{border-color:#6fd8b1;background:#6fd8b1;color:#13271f}.mini-step strong{display:block;color:#eaf3ef;font-size:.78rem}.mini-step small{display:block;color:#7f988e;font-size:.64rem}.mini-state{color:#6fd8b1;font:.63rem monospace;opacity:0}.mini-step.active .mini-state{opacity:1}
+    .wave-card{position:relative;margin:0 26px 20px;padding:15px 16px;border:1px solid rgba(255,255,255,.11);border-radius:14px;background:rgba(4,15,10,.28)}.wave-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}.wave-head>span:first-child{color:#a4bbb1;font-size:.7rem;font-weight:750}.wave{display:flex;height:42px;align-items:center;gap:3px;overflow:hidden}.wave i{width:3px;height:var(--h);flex:1;border-radius:4px;background:#6fd8b1;opacity:.68;transform:scaleY(.55);animation:breathe 1.8s ease-in-out infinite alternate;animation-delay:var(--d)}@keyframes breathe{to{transform:scaleY(1);opacity:1}}.viz-foot{position:absolute;right:20px;bottom:18px;left:20px;display:flex;justify-content:space-between;color:#7f988e;font-size:.65rem}.viz-foot strong{color:#c9d9d1}
+    .scan{display:grid;grid-template-columns:repeat(4,1fr);margin-top:clamp(50px,7vw,86px);border-top:1px solid var(--line);border-bottom:1px solid var(--line)}.scan-item{min-height:146px;padding:23px 24px;border-right:1px solid var(--line)}.scan-item:first-child{padding-left:0}.scan-item:last-child{padding-right:0;border-right:0}.scan-num{display:block;margin-bottom:24px;color:var(--accent);font:800 .7rem monospace}.scan-item strong{display:block;margin-bottom:7px;font-size:1rem;letter-spacing:-.02em}.scan-item p{margin:0;font-size:.82rem;line-height:1.52}
+
+    /* Essentials ------------------------------------------------------ */
+    .principles{display:grid;grid-template-columns:repeat(2,1fr);gap:16px}.principle{display:flex;min-height:190px;gap:20px;padding:clamp(22px,3vw,32px);transition:.25s var(--ease)}.principle:hover{transform:translateY(-3px);border-color:var(--line-2);box-shadow:var(--shadow-md)}.principle p{margin:0;font-size:.91rem}
+    .compare{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px}.compare-card{padding:26px;border:1px solid var(--line);border-radius:var(--r-md)}.compare-card.yes{background:var(--accent-pale)}.compare-card.no{background:var(--surface)}.compare-title{display:flex;align-items:center;gap:9px;margin-bottom:16px;font-size:.82rem;font-weight:820;letter-spacing:.05em;text-transform:uppercase}.compare-title span{display:grid;width:22px;height:22px;place-items:center;border-radius:50%;background:var(--accent-soft);color:var(--accent-2)}.no .compare-title span{background:var(--danger-soft);color:var(--danger)}.clean{display:grid;gap:10px;margin:0;padding:0;list-style:none}.clean li{display:flex;gap:9px;color:var(--muted-2);font-size:.88rem}.clean li::before{width:5px;height:5px;flex:0 0 auto;margin-top:.52em;border-radius:50%;background:var(--accent);content:""}.no .clean li::before{background:var(--danger)}
+
+    /* Interactive flow ------------------------------------------------ */
+    .flow-layout{display:grid;grid-template-columns:320px minmax(0,1fr);gap:28px;align-items:start}.flow-tabs{position:sticky;top:calc(var(--nav) + 28px);display:grid;gap:3px}.flow-tab{position:relative;display:grid;grid-template-columns:34px 1fr auto;align-items:center;gap:12px;width:100%;min-height:60px;padding:9px 12px;border:0;border-radius:12px;background:transparent;color:#89a098;cursor:pointer;text-align:left;transition:.2s}.flow-tab:hover{background:rgba(255,255,255,.05);color:#dfe9e4}.flow-tab[aria-selected="true"]{transform:translateX(5px);background:rgba(111,216,177,.11);color:#f4faf7}.flow-tab:not(:last-child)::after{position:absolute;bottom:-8px;left:28px;width:1px;height:16px;background:rgba(255,255,255,.11);content:""}.flow-index{display:grid;width:34px;height:34px;place-items:center;border:1px solid rgba(255,255,255,.14);border-radius:10px;font:.68rem monospace}.flow-tab[aria-selected="true"] .flow-index{border-color:#6fd8b1;background:#6fd8b1;color:#163027}.flow-name{font-size:.85rem;font-weight:750}.flow-module{display:block;margin-top:1px;color:#6f8980;font:.62rem monospace}.flow-arrow{opacity:0}.flow-tab[aria-selected="true"] .flow-arrow{opacity:1}
+    .flow-panel{min-height:570px;padding:clamp(24px,4vw,42px);border:1px solid rgba(255,255,255,.11);border-radius:22px;background:rgba(255,255,255,.055);box-shadow:0 22px 54px rgba(0,0,0,.16)}.flow-panel-top{display:flex;align-items:center;justify-content:space-between;gap:20px;margin-bottom:54px}.flow-stage{color:#6fd8b1;font:800 .7rem monospace;letter-spacing:.08em;text-transform:uppercase}.flow-panel h3{max-width:640px;margin-bottom:16px;font-size:clamp(1.9rem,4vw,3.5rem);letter-spacing:-.05em}.flow-panel>p{max-width:660px;margin-bottom:34px}.io-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:20px}.io{min-height:110px;padding:18px;border:1px solid rgba(255,255,255,.1);border-radius:13px;background:rgba(4,17,11,.22)}.io span{display:block;margin-bottom:9px;color:#6f8d81;font-size:.66rem;font-weight:800;letter-spacing:.1em;text-transform:uppercase}.io strong{color:#e6f0eb;font-size:.87rem;font-weight:650}.flow-insight{display:flex;gap:12px;padding:16px;border:1px solid rgba(111,216,177,.18);border-radius:13px;background:rgba(111,216,177,.07);color:#aec5bc;font-size:.82rem}.flow-insight b{color:#72dcb4}.flow-tags{display:flex;flex-wrap:wrap;gap:7px;margin-top:24px}.flow-tag{padding:5px 8px;border:1px solid rgba(255,255,255,.1);border-radius:6px;color:#8fa89e;font:.65rem monospace}
+
+    /* Narration ------------------------------------------------------- */
+    .studio{overflow:hidden}.toolbar{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:18px 20px;border-bottom:1px solid var(--line)}.transform{display:grid;grid-template-columns:1fr 1fr;min-height:360px}.transform-side{padding:clamp(24px,4vw,42px)}.transform-side+div{border-left:1px solid var(--line);background:color-mix(in srgb,var(--accent-pale) 70%,var(--surface))}.transform-label{display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;color:var(--muted);font-size:.68rem;font-weight:820;letter-spacing:.11em;text-transform:uppercase}.code-sample{min-height:170px;margin:0;padding:20px;overflow:auto;border:1px solid var(--line);border-radius:13px;background:var(--canvas-2);color:var(--ink-2);font-size:clamp(.73rem,1.4vw,.85rem);line-height:1.75;white-space:pre-wrap}.spoken{display:flex;gap:13px;color:var(--ink-2);font-size:clamp(1.02rem,2vw,1.25rem);line-height:1.7}.speaker{display:grid;width:30px;height:30px;place-items:center;flex:0 0 auto;margin-top:3px;border-radius:50%;background:var(--accent-soft);color:var(--accent-2)}.speaker svg{width:15px;height:15px}.transform-note{margin-top:22px;padding-top:18px;border-top:1px solid var(--line);font-size:.82rem}
+    .chunk-grid{display:grid;grid-template-columns:.82fr 1.18fr;gap:28px;margin-top:28px}.chunk-copy{padding:clamp(25px,4vw,38px)}.chunk-copy p{font-size:.9rem}.rules{display:grid;gap:10px;margin-top:20px}.rule{display:flex;gap:10px;color:var(--muted-2);font-size:.82rem}.rule span{display:grid;width:20px;height:20px;place-items:center;flex:0 0 auto;border-radius:6px;background:var(--accent-soft);color:var(--accent-2);font:850 .62rem monospace}.chunk-viz{display:flex;flex-direction:column;justify-content:center;padding:clamp(26px,4vw,42px);background:var(--navy);color:#fff}.chunk-viz-head{display:flex;align-items:flex-end;justify-content:space-between;gap:15px;margin-bottom:24px}.chunk-viz-head strong{display:block;font-size:.88rem}.chunk-viz-head span{color:#7f988e;font:.67rem monospace}.chunk-row{display:flex;min-height:74px;gap:5px;margin-bottom:12px}.chunk-block{display:flex;min-width:0;align-items:center;justify-content:center;padding:8px;border:1px solid rgba(255,255,255,.11);border-radius:9px;background:rgba(255,255,255,.055);color:#c4d4cc;font-size:.64rem;text-align:center}.chunk-block.heading{flex:.54;border-color:rgba(111,216,177,.28);background:rgba(111,216,177,.1);color:#80ddb9}.chunk-block.prose{flex:1.6}.chunk-block.table{flex:1.25;border-color:rgba(181,168,255,.25);background:rgba(122,105,216,.12);color:#c6bbff}.chunk-block.codeblock{flex:1;border-color:rgba(238,178,95,.24);background:rgba(238,178,95,.09);color:#eec38a}.boundaries{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}.boundary{padding:9px;border-top:2px solid #6fd8b1;color:#8fa89e;font:.61rem monospace}.boundary:nth-child(2){border-color:#b6a8ff}.boundary:nth-child(3){border-color:#e7b673}
+
+    /* Architecture ---------------------------------------------------- */
+    .arch-layout{display:grid;grid-template-columns:minmax(0,1.28fr) minmax(330px,.72fr);gap:24px}.arch-map{position:relative;min-height:640px;padding:clamp(24px,4vw,42px);overflow:hidden}.arch-map::before{position:absolute;inset:0;content:"";background-image:linear-gradient(var(--line) 1px,transparent 1px),linear-gradient(90deg,var(--line) 1px,transparent 1px);background-size:28px 28px;opacity:.3;mask-image:radial-gradient(circle,#000,transparent 82%)}.map-label{position:relative;display:flex;align-items:center;justify-content:space-between;margin-bottom:30px}.map-label>span:first-child{color:var(--muted);font-size:.7rem;font-weight:800;letter-spacing:.1em;text-transform:uppercase}.layer-stack{position:relative;z-index:1;display:grid;max-width:470px;gap:18px;margin-inline:auto}.arch-node{position:relative;display:grid;grid-template-columns:42px 1fr auto;align-items:center;gap:13px;width:100%;min-height:74px;padding:13px 16px;border:1px solid var(--line);border-radius:14px;background:var(--surface);color:var(--ink);cursor:pointer;text-align:left;box-shadow:var(--shadow-sm);transition:.2s var(--ease)}.arch-node:hover,.arch-node[aria-pressed="true"]{transform:translateY(-2px);border-color:var(--accent);box-shadow:var(--shadow-md)}.arch-node:not(:last-child)::after{position:absolute;bottom:-19px;left:50%;width:1px;height:19px;background:var(--line-2);content:""}.node-icon{display:grid;width:42px;height:42px;place-items:center;border-radius:11px;background:var(--canvas-2);color:var(--muted-2)}.arch-node[aria-pressed="true"] .node-icon{background:var(--accent-soft);color:var(--accent-2)}.node-icon svg{width:20px;height:20px}.arch-node strong{display:block;font-size:.91rem}.arch-node small{display:block;color:var(--muted);font:.65rem monospace}.node-mode{color:var(--muted);font-size:.65rem;font-weight:750}.external{position:relative;z-index:1;display:flex;justify-content:center;gap:8px;margin-top:28px}.external span{padding:7px 9px;border:1px dashed var(--line-2);border-radius:8px;background:var(--canvas);color:var(--muted);font-size:.66rem}
+    .arch-detail{display:flex;flex-direction:column;padding:clamp(26px,4vw,38px);background:var(--navy);color:#eff7f3}.arch-detail .eyebrow{margin-bottom:34px}.arch-detail h3{margin-bottom:14px;color:#fff;font-size:clamp(1.75rem,3vw,2.6rem)}.arch-detail>p{min-height:108px;color:#aebfb7;font-size:.95rem}.detail-facts{display:grid;gap:12px;margin-top:auto}.detail-fact{padding-top:14px;border-top:1px solid rgba(255,255,255,.1)}.detail-fact span{display:block;margin-bottom:3px;color:#789187;font-size:.64rem;font-weight:800;letter-spacing:.1em;text-transform:uppercase}.detail-fact strong{color:#dce8e2;font:.75rem monospace;font-weight:550}.arch-truths{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:24px}.truth{padding:20px}.truth strong{display:block;margin-bottom:6px;font-size:.9rem}.truth p{margin:0;font-size:.78rem}
+
+    /* Recovery -------------------------------------------------------- */
+    .lab{overflow:hidden}.lab-top{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:22px 24px;border-bottom:1px solid var(--line)}.lab-top h3{margin:0}.scenario-switch{display:flex;flex-wrap:wrap;gap:7px}.scenario-button{padding:8px 12px;border:1px solid var(--line);border-radius:9px;background:var(--surface);color:var(--muted);cursor:pointer;font-size:.78rem;font-weight:750}.scenario-button:hover{color:var(--ink)}.scenario-button[aria-pressed="true"]{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-2)}.lab-body{display:grid;grid-template-columns:1.1fr .9fr;min-height:390px}.checkpoint-stage{padding:clamp(28px,5vw,50px);border-right:1px solid var(--line);background:var(--canvas-2)}.checkpoint-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:46px}.checkpoint-head span{color:var(--muted);font:.68rem monospace}.checkpoint-line{position:relative;display:grid;grid-template-columns:repeat(5,1fr);gap:11px}.checkpoint-line::before{position:absolute;top:25px;right:7%;left:7%;height:2px;background:var(--line-2);content:""}.checkpoint{position:relative;z-index:1;text-align:center}.checkpoint-box{display:grid;width:52px;height:52px;place-items:center;margin:0 auto 10px;border:2px solid var(--line-2);border-radius:14px;background:var(--surface);color:var(--muted);font:800 .75rem monospace}.checkpoint.saved .checkpoint-box{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-2)}.checkpoint.retry .checkpoint-box{border-color:var(--amber);background:var(--amber-soft);color:var(--amber)}.checkpoint.discarded .checkpoint-box,.checkpoint.stopped .checkpoint-box{border-color:var(--danger);background:var(--danger-soft);color:var(--danger)}.checkpoint.paused .checkpoint-box{border-color:var(--violet);background:var(--violet-soft);color:var(--violet)}.checkpoint strong{display:block;font-size:.7rem}.checkpoint small{display:block;color:var(--muted);font-size:.61rem}.checkpoint-caption{margin-top:42px;padding:15px;border:1px solid var(--line);border-radius:12px;background:var(--surface);color:var(--muted);font-size:.78rem}.scenario-copy{display:flex;flex-direction:column;justify-content:center;padding:clamp(28px,5vw,50px)}.scenario-copy .badge{align-self:flex-start;margin-bottom:20px}.scenario-copy h3{font-size:clamp(1.55rem,3vw,2.3rem)}.scenario-copy p{font-size:.92rem}.scenario-steps{display:grid;gap:10px;margin-top:14px}.scenario-step{display:grid;grid-template-columns:24px 1fr;gap:9px;color:var(--muted-2);font-size:.8rem}.scenario-step span{display:grid;width:22px;height:22px;place-items:center;border-radius:50%;background:var(--accent-soft);color:var(--accent-2);font:850 .62rem monospace}.controls{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:24px}.control{padding:20px}.control .kicker{margin-bottom:12px}.control strong{display:block;margin-bottom:6px}.control p{margin:0;font-size:.78rem}
+
+    /* Developer bridge ------------------------------------------------ */
+    .dev-shell{overflow:hidden}.dev-panel{padding:clamp(24px,4vw,42px)}.bridge{width:100%;border-collapse:collapse}.bridge th{padding:10px 14px 14px;border-bottom:1px solid var(--line);color:var(--muted);font-size:.68rem;font-weight:800;letter-spacing:.09em;text-align:left;text-transform:uppercase}.bridge td{padding:17px 14px;border-bottom:1px solid var(--line);color:var(--muted-2);font-size:.86rem}.bridge tr:last-child td{border-bottom:0}.bridge td:first-child{color:var(--ink);font-weight:730}.bridge code{white-space:nowrap}
+    .module-map{display:grid;grid-template-columns:.9fr 1.1fr;gap:24px;align-items:center}.module-tree{padding:24px;border:1px solid var(--line);border-radius:15px;background:var(--canvas-2);color:var(--ink-2);font-size:.82rem;line-height:2;white-space:pre-wrap}.module-notes{display:grid;gap:10px}.module-note{display:flex;gap:11px;padding:13px;border:1px solid var(--line);border-radius:11px}.module-note code{align-self:flex-start;background:var(--accent-soft);color:var(--accent-2)}.module-note p{margin:0;font-size:.78rem}.runtime-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.runtime-card{padding:23px;border:1px solid var(--line);border-radius:14px;background:var(--surface)}.step-number{display:grid;width:30px;height:30px;place-items:center;margin-bottom:22px;border-radius:9px;background:var(--accent-soft);color:var(--accent-2);font:850 .7rem monospace}.runtime-card p{margin:0;font-size:.8rem}.runtime-card pre{margin:15px 0 0;padding:12px;overflow:auto;border-radius:9px;background:var(--navy);color:#b9cec4;font-size:.7rem}
+    .python-intro{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:24px;margin:70px 0 24px}.python-intro h3{max-width:760px;margin-bottom:9px;font-size:clamp(1.7rem,3.4vw,2.75rem)}.python-intro p{max-width:720px;margin:0;font-size:.93rem}.python-walkthrough{display:grid;grid-template-columns:250px minmax(0,1fr);overflow:hidden}.python-rail{padding:18px;border-right:1px solid var(--line);background:var(--canvas-2)}.python-rail-label{padding:8px 10px 14px;color:var(--muted);font-size:.65rem;font-weight:820;letter-spacing:.11em;text-transform:uppercase}.python-tab{display:grid;grid-template-columns:31px 1fr;align-items:center;gap:10px;width:100%;min-height:54px;padding:8px 10px;border:0;border-radius:10px;background:transparent;color:var(--muted);cursor:pointer;text-align:left;transition:.18s}.python-tab:hover{background:color-mix(in srgb,var(--surface) 70%,transparent);color:var(--ink)}.python-tab[aria-selected="true"]{background:var(--surface);color:var(--ink);box-shadow:var(--shadow-sm)}.python-tab span:first-child{display:grid;width:29px;height:29px;place-items:center;border:1px solid var(--line);border-radius:8px;font:750 .65rem monospace}.python-tab[aria-selected="true"] span:first-child{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-2)}.python-tab strong{display:block;font-size:.78rem}.python-tab small{display:block;color:var(--muted);font-size:.61rem}.python-lesson{padding:clamp(24px,4vw,42px)}.lesson-top{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;margin-bottom:26px}.lesson-top h3{margin-bottom:8px;font-size:clamp(1.4rem,2.6vw,2.05rem)}.lesson-top p{max-width:690px;margin:0;font-size:.86rem}.code-compare{display:grid;grid-template-columns:1fr 1fr;gap:10px}.code-pane{min-width:0;overflow:hidden;border:1px solid var(--line);border-radius:13px;background:var(--navy)}.code-pane.ts{background:color-mix(in srgb,var(--navy) 91%,#6555b8)}.code-pane-head{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid rgba(255,255,255,.09);color:#a9beb4;font-size:.65rem;font-weight:800;letter-spacing:.09em;text-transform:uppercase}.code-pane-head span:last-child{color:#718a7f;font-family:monospace;font-weight:500;letter-spacing:0;text-transform:none}.code-pane pre{min-height:220px;margin:0;padding:18px;overflow:auto;color:#dce9e2;font-size:clamp(.68rem,1.15vw,.78rem);line-height:1.75;white-space:pre}.annotations{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-top:18px}.annotation{display:grid;grid-template-columns:25px 1fr;gap:10px;padding:13px;border:1px solid var(--line);border-radius:11px;background:var(--surface)}.annotation>span{display:grid;width:23px;height:23px;place-items:center;border-radius:7px;background:var(--accent-soft);color:var(--accent-2);font:800 .61rem monospace}.annotation strong{display:block;margin-bottom:2px;font-size:.78rem}.annotation p{margin:0;font-size:.72rem;line-height:1.5}.python-gotcha{display:flex;gap:10px;margin-top:12px;padding:13px 15px;border-left:3px solid var(--amber);border-radius:0 10px 10px 0;background:var(--amber-soft);color:var(--muted-2);font-size:.77rem}.python-gotcha strong{color:var(--ink)}
+    .ecosystem{margin-top:30px;padding:clamp(25px,4vw,38px)}.ecosystem-head{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;margin-bottom:30px}.ecosystem-head h3{margin-bottom:7px}.ecosystem-head p{max-width:680px;margin:0;font-size:.84rem}.ecosystem-steps{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}.eco-step{position:relative;min-height:166px;padding:16px;border:1px solid var(--line);border-radius:12px;background:var(--surface)}.eco-step:not(:last-child)::after{position:absolute;z-index:2;top:33px;right:-13px;display:grid;width:18px;height:18px;place-items:center;border:1px solid var(--line);border-radius:50%;background:var(--canvas);color:var(--muted);content:"→";font-size:.65rem}.eco-step>span{display:block;margin-bottom:22px;color:var(--accent);font:800 .65rem monospace}.eco-step strong{display:block;margin-bottom:7px;font-size:.82rem}.eco-step p{margin:0;font-size:.7rem;line-height:1.48}.eco-step code{display:inline-block;margin-top:9px;font-size:.68rem}.python-quick{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:12px}.quick-note{padding:17px;border:1px solid var(--line);border-radius:12px}.quick-note strong{display:block;margin-bottom:7px;font-size:.82rem}.quick-note p{margin:0;font-size:.74rem}.quick-note code{font-size:.78em}
+    .deep-dives{margin-top:24px}.deep{border-top:1px solid var(--line)}.deep:last-child{border-bottom:1px solid var(--line)}.deep summary{display:grid;grid-template-columns:34px 1fr auto;align-items:center;gap:12px;padding:19px 4px;cursor:pointer;list-style:none;font-weight:760}.deep summary::-webkit-details-marker{display:none}.deep summary span:first-child{color:var(--accent);font:.68rem monospace}.deep summary::after{display:grid;width:25px;height:25px;place-items:center;border:1px solid var(--line);border-radius:50%;color:var(--muted);content:"+";font-weight:500;transition:.2s}.deep[open] summary::after{transform:rotate(45deg)}.deep-content{padding:0 46px 24px}.deep-content p{max-width:800px;font-size:.86rem}.fact-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.mini-fact{padding:15px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}.mini-fact strong{display:block;margin-bottom:4px;font-size:.8rem}.mini-fact span{color:var(--muted);font-size:.72rem}
+
+    /* Quiz and closing ------------------------------------------------ */
+    .quiz-shell{display:grid;grid-template-columns:minmax(0,1fr) 290px;min-height:520px;overflow:hidden}.quiz-main{padding:clamp(28px,5vw,54px)}.quiz-progress{display:flex;gap:5px;margin-bottom:44px}.quiz-progress i{height:4px;flex:1;border-radius:4px;background:var(--line)}.quiz-progress i.done,.quiz-progress i.current{background:var(--accent)}.quiz-count{margin-bottom:10px;color:var(--accent-2);font-size:.72rem;font-weight:820;letter-spacing:.1em;text-transform:uppercase}.quiz-question{max-width:720px;margin-bottom:28px;font-size:clamp(1.45rem,3vw,2.25rem)}.quiz-answers{display:grid;gap:9px}.quiz-answer{display:grid;grid-template-columns:30px 1fr;align-items:center;gap:10px;width:100%;padding:14px 16px;border:1px solid var(--line);border-radius:11px;background:var(--surface);color:var(--ink-2);cursor:pointer;text-align:left;transition:.18s}.quiz-answer:hover:not(:disabled){transform:translateX(3px);border-color:var(--accent)}.quiz-answer:disabled{cursor:default}.quiz-answer.correct{border-color:var(--accent);background:var(--accent-pale)}.quiz-answer.incorrect{border-color:var(--danger);background:var(--danger-soft)}.answer-letter{display:grid;width:28px;height:28px;place-items:center;border:1px solid var(--line);border-radius:8px;color:var(--muted);font:850 .68rem monospace}.correct .answer-letter{border-color:var(--accent);background:var(--accent);color:#fff}.incorrect .answer-letter{border-color:var(--danger);background:var(--danger);color:#fff}.quiz-feedback{display:none;margin-top:18px;padding:15px 16px;border-radius:11px;background:var(--canvas-2);color:var(--muted-2);font-size:.84rem}.quiz-feedback.show{display:block}.quiz-feedback strong{color:var(--ink)}.quiz-next{margin-top:18px}.quiz-aside{display:flex;flex-direction:column;justify-content:space-between;padding:34px 28px;background:var(--navy);color:#ecf5f0}.score-ring{position:relative;display:grid;width:116px;height:116px;place-items:center;margin:12px auto 26px;border-radius:50%;background:conic-gradient(#6fd8b1 var(--score-angle),rgba(255,255,255,.1) 0)}.score-ring::before{position:absolute;width:92px;height:92px;border-radius:inherit;background:var(--navy);content:""}.score-ring strong{position:relative;font-size:1.55rem}.quiz-aside h3{color:#fff}.quiz-aside p{color:#91a99f;font-size:.78rem}.quiz-aside .tiny{color:#718b80;font-size:.67rem}.quiz-complete{padding:30px 0}.quiz-complete h3{font-size:clamp(2rem,4vw,3.4rem)}
+    .takeaway-panel{position:relative;overflow:hidden;padding:clamp(34px,6vw,68px);border-radius:var(--r-lg);background:var(--navy);color:#fff}.takeaway-panel::after{position:absolute;top:-180px;right:-160px;width:430px;height:430px;border:70px solid rgba(111,216,177,.08);border-radius:50%;content:""}.takeaway-panel h2{position:relative;z-index:1;max-width:850px;color:#fff}.takeaway-panel>p{position:relative;z-index:1;max-width:720px;color:#adc1b7;font-size:1.05rem}.takeaways{position:relative;z-index:1;display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:42px}.takeaway{padding:18px;border:1px solid rgba(255,255,255,.1);border-radius:13px;background:rgba(255,255,255,.055)}.takeaway span{display:block;margin-bottom:18px;color:#6fd8b1;font:.68rem monospace}.takeaway strong{display:block;color:#f3faf6;font-size:.87rem;line-height:1.45}
+    footer{padding:36px 0 50px}.footer-row{display:flex;align-items:center;justify-content:space-between;gap:20px;padding-top:24px;border-top:1px solid var(--line);color:var(--muted);font-size:.72rem}.footer-row a{color:var(--ink-2);font-weight:720;text-decoration:none}.footer-row a:hover{color:var(--accent)}
+
+    /* Progressive enhancement and responsive ------------------------- */
+    .js .reveal{opacity:0;transform:translateY(16px);transition:opacity .65s var(--ease),transform .65s var(--ease)}.js .reveal.visible{opacity:1;transform:none}
+    @media(max-width:1020px){.hero-grid{grid-template-columns:1fr}.hero-copy{max-width:790px}.scan{grid-template-columns:repeat(2,1fr)}.scan-item:nth-child(2){border-right:0}.scan-item:nth-child(-n+2){border-bottom:1px solid var(--line)}.scan-item:nth-child(3){padding-left:0}.flow-layout{grid-template-columns:245px minmax(0,1fr)}.arch-layout{grid-template-columns:1fr}.arch-detail{min-height:390px}.arch-detail>p{min-height:auto}.controls,.takeaways{grid-template-columns:repeat(2,1fr)}.ecosystem-steps{grid-template-columns:repeat(3,1fr)}.eco-step::after{display:none!important}.quiz-shell{grid-template-columns:1fr}.quiz-aside{display:grid;grid-template-columns:180px 1fr;align-items:center;gap:22px}.score-ring{margin:0}}
+    @media(max-width:800px){:root{--nav:62px}.container{width:min(var(--max),calc(100% - 28px))}.nav-links{display:none}.brand-sub,.learn span{display:none}.hero{padding-top:48px}.principles,.compare,.transform,.chunk-grid,.lab-body,.module-map{grid-template-columns:1fr}.transform-side+div{border-top:1px solid var(--line);border-left:0}.checkpoint-stage{border-right:0;border-bottom:1px solid var(--line)}.flow-layout{grid-template-columns:1fr}.flow-tabs{position:static;display:flex;padding-bottom:6px;overflow-x:auto}.flow-tab{min-width:176px}.flow-tab:not(:last-child)::after{display:none}.flow-panel{min-height:510px}.arch-truths,.fact-grid,.runtime-grid{grid-template-columns:1fr}.lab-top,.toolbar,.python-intro,.ecosystem-head{align-items:flex-start;grid-template-columns:1fr;flex-direction:column}.bridge{display:block;overflow-x:auto}.python-walkthrough{grid-template-columns:1fr}.python-rail{display:flex;padding:10px;overflow-x:auto;border-right:0;border-bottom:1px solid var(--line)}.python-rail-label{display:none}.python-tab{min-width:168px}.code-compare{grid-template-columns:1fr}.python-quick{grid-template-columns:1fr}.deep-content{padding-left:0}}
+    @media(max-width:560px){h1{font-size:clamp(3.15rem,17vw,5rem)}.section{padding:76px 0}.hero-viz{min-height:570px;border-radius:21px}.viz-canvas{grid-template-columns:1fr}.md-file{display:none}.wave-card{margin-inline:18px}.scan{grid-template-columns:1fr}.scan-item,.scan-item:first-child,.scan-item:nth-child(3),.scan-item:last-child{min-height:auto;padding:20px 0;border-right:0;border-bottom:1px solid var(--line)}.scan-item:last-child{border-bottom:0}.scan-num{margin-bottom:8px}.principle{flex-direction:column}.io-grid{grid-template-columns:1fr}.flow-panel-top{margin-bottom:36px}.flow-panel{padding:24px 19px}.checkpoint-line{gap:4px}.checkpoint-box{width:42px;height:42px;border-radius:11px}.checkpoint-line::before{top:21px}.checkpoint strong{font-size:.61rem}.checkpoint small{display:none}.controls,.takeaways,.ecosystem-steps,.annotations{grid-template-columns:1fr}.quiz-aside{grid-template-columns:1fr}.footer-row{align-items:flex-start;flex-direction:column}.chunk-row{flex-wrap:wrap}.chunk-block{min-height:50px;flex-basis:46%!important}.arch-map{padding-inline:14px}.external{flex-wrap:wrap}.lesson-top{flex-direction:column}.code-pane pre{font-size:.67rem}.python-lesson{padding:19px 14px}}
+    @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}.js .reveal{opacity:1;transform:none}}
+  </style>
+  <script>document.documentElement.classList.add('js')</script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <header class="site-head" aria-label="Primary navigation">
+    <div class="scroll-line" aria-hidden="true"><span id="scroll-line"></span></div>
+    <div class="container nav">
+      <a class="brand" href="#overview" aria-label="SpeakMD visual guide, back to top"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span><span>SpeakMD <span class="brand-sub">/ system guide</span></span></a>
+      <nav class="nav-links" aria-label="Guide sections"><a href="#principles">Essentials</a><a href="#flow">Flow</a><a href="#architecture">Architecture</a><a href="#recovery">Recovery</a><a href="#developer">Python bridge</a><a href="#check">Check</a></nav>
+      <div class="nav-actions"><div class="learn" title="Sections explored"><i class="learn-ring" id="learn-ring" style="--visited:0%" aria-hidden="true"></i><span id="learn-label">0% explored</span></div><button class="icon-button" id="theme" type="button" aria-label="Switch to dark theme" aria-pressed="false"><svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M20.4 15.2A8.7 8.7 0 0 1 8.8 3.6 8.8 8.8 0 1 0 20.4 15.2Z"/></svg><svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="3.7"/><path d="M12 2v2.2M12 19.8V22M4.9 4.9l1.6 1.6M17.5 17.5l1.6 1.6M2 12h2.2M19.8 12H22M4.9 19.1l1.6-1.6M17.5 6.5l1.6-1.6"/></svg></button></div>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero" id="overview" data-track>
+      <div class="container">
+        <div class="hero-grid">
+          <div class="hero-copy reveal">
+            <span class="badge accent"><span class="dot"></span> Visual system guide · about 8 minutes</span>
+            <h1>Markdown in.<br><span>Spoken audio</span> out.</h1>
+            <p class="hero-lede">SpeakMD turns long Markdown documents into natural narration—locally, one durable audio checkpoint at a time.</p>
+            <div class="button-row"><a class="button" href="#flow">Trace a document <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg></a><a class="button secondary" href="#principles">Start with the 30-second scan</a></div>
+            <div class="hero-proof" aria-label="Key product qualities"><span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 4 4L19 6"/></svg>No accounts</span><span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 4 4L19 6"/></svg>No hosted API</span><span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 4 4L19 6"/></svg>No database</span></div>
+          </div>
+          <div class="hero-viz reveal" aria-label="Animated overview of the SpeakMD pipeline">
+            <div class="viz-top"><div class="window-dots" aria-hidden="true"><i></i><i></i><i></i></div><span class="local">Local machine boundary</span></div>
+            <div class="viz-canvas">
+              <div class="md-file" aria-hidden="true"><span class="md-corner"></span><div class="ext">REPORT.MD</div><div class="file-line"></div><div class="file-line"></div><div class="file-line"></div><div class="file-line"></div><div class="file-meta">UTF-8 · 1 document</div></div>
+              <div class="mini-pipeline" id="hero-pipeline">
+                <div class="mini-step active"><span class="mini-num">01</span><span><strong>Understand structure</strong><small>Markdown → narration blocks</small></span><span class="mini-state">active</span></div>
+                <div class="mini-step"><span class="mini-num">02</span><span><strong>Plan utterances</strong><small>Semantic chunks ≤ limit</small></span><span class="mini-state">active</span></div>
+                <div class="mini-step"><span class="mini-num">03</span><span><strong>Synthesize locally</strong><small>Kokoro · CPU or CUDA</small></span><span class="mini-state">active</span></div>
+                <div class="mini-step"><span class="mini-num">04</span><span><strong>Save checkpoints</strong><small>0001.wav · 0002.wav · …</small></span><span class="mini-state">active</span></div>
+                <div class="mini-step"><span class="mini-num">05</span><span><strong>Assemble output</strong><small>Final WAV · optional MP3</small></span><span class="mini-state">active</span></div>
+              </div>
+            </div>
+            <div class="wave-card"><div class="wave-head"><span id="hero-stage">Narrating document structure…</span><span class="badge dark">24 kHz · mono</span></div><div class="wave" aria-hidden="true"><i style="--h:23%;--d:-.1s"></i><i style="--h:68%;--d:-.7s"></i><i style="--h:42%;--d:-1.2s"></i><i style="--h:83%;--d:-.3s"></i><i style="--h:55%;--d:-1.4s"></i><i style="--h:30%;--d:-.8s"></i><i style="--h:75%;--d:-.2s"></i><i style="--h:96%;--d:-1.1s"></i><i style="--h:45%;--d:-.5s"></i><i style="--h:70%;--d:-1.5s"></i><i style="--h:28%;--d:-.4s"></i><i style="--h:58%;--d:-1s"></i><i style="--h:88%;--d:-.6s"></i><i style="--h:36%;--d:-1.3s"></i><i style="--h:64%;--d:-.2s"></i><i style="--h:79%;--d:-.9s"></i><i style="--h:40%;--d:-.5s"></i><i style="--h:92%;--d:-1.1s"></i><i style="--h:48%;--d:-.3s"></i><i style="--h:69%;--d:-1.4s"></i><i style="--h:31%;--d:-.8s"></i><i style="--h:80%;--d:-.2s"></i><i style="--h:53%;--d:-1.2s"></i><i style="--h:72%;--d:-.6s"></i></div></div>
+            <div class="viz-foot"><span>One worker · one model</span><strong>Everything stays here</strong></div>
+          </div>
+        </div>
+        <div class="scan reveal" aria-label="SpeakMD at a glance">
+          <article class="scan-item"><span class="scan-num">01 / PRODUCT</span><strong>A local listening tool</strong><p>Drop in Markdown, choose a voice, monitor progress, then play or download the result.</p></article>
+          <article class="scan-item"><span class="scan-num">02 / CONSTRAINT</span><strong>Long text cannot go in one shot</strong><p>TTS has length limits and synthesis is slow, so the document becomes manageable speech units.</p></article>
+          <article class="scan-item"><span class="scan-num">03 / STRATEGY</span><strong>Every chunk is durable</strong><p>Independent WAV files make pause, retry, cancel, and restart recovery inexpensive.</p></article>
+          <article class="scan-item"><span class="scan-num">04 / SHAPE</span><strong>Small server, one worker</strong><p>FastAPI handles HTTP; a single thread owns the model; the filesystem stores truth.</p></article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="principles" data-track>
+      <div class="container">
+        <div class="section-head reveal"><span class="eyebrow">The 30-second mental model</span><h2>Four choices make the whole system click.</h2><p>Understand these constraints and the rest of SpeakMD becomes a predictable pipeline—not a black box.</p></div>
+        <div class="principles">
+          <article class="principle card reveal"><span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20h16M6.5 20V9.5L12 5l5.5 4.5V20M9.5 20v-6h5v6"/></svg></span><div><h3>Local by design</h3><p>The document, job state, model, and generated audio remain on the user’s machine. There are no accounts, hosted APIs, or external databases.</p></div></article>
+          <article class="principle card reveal"><span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M9 9h6v6H9zM9 1v3M15 1v3M9 20v3M15 20v3M1 9h3M20 9h3M1 15h3M20 15h3"/></svg></span><div><h3>One model owner</h3><p>A single worker thread processes one job at a time. That prevents duplicate model loads, keeps RAM/VRAM predictable, and avoids GPU contention.</p></div></article>
+          <article class="principle card reveal"><span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 3h10l4 4v14H5z"/><path d="M14 3v5h5M8 13h8M8 17h5"/></svg></span><div><h3>Filesystem as persistence</h3><p>Each job is a directory. <code>job.json</code> is its source of truth, while atomic WAV checkpoints record completed synthesis work.</p></div></article>
+          <article class="principle card reveal"><span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M4 12h10M4 18h7"/><path d="m16 16 2 2 4-5"/></svg></span><div><h3>Structure becomes speech</h3><p>The parser does not render Markdown to HTML. It turns headings, tables, links, lists, and code into language that still makes sense when heard.</p></div></article>
+        </div>
+        <div class="compare reveal"><article class="compare-card yes"><div class="compare-title"><span>✓</span> A useful analogy</div><ul class="clean"><li>An Express-like local HTTP server</li><li>A service layer plus one in-process worker</li><li>The filesystem acting as database and object storage</li></ul></article><article class="compare-card no"><div class="compare-title"><span>×</span> What it is not</div><ul class="clean"><li>Not a cloud or multi-user service</li><li>Not a Redis/BullMQ-style async queue</li><li>Not a general-purpose Markdown renderer</li></ul></article></div>
+      </div>
+    </section>
+
+    <section class="section dark-section" id="flow" data-track>
+      <div class="container" style="position:relative">
+        <div class="section-head reveal"><span class="eyebrow">The end-to-end story</span><h2>Follow one document from upload to headphones.</h2><p>Select a stage to see the responsibility, handoff, and design reason behind it.</p></div>
+        <div class="flow-layout reveal"><div class="flow-tabs" id="flow-tabs" role="tablist" aria-label="Pipeline stages"></div><article class="flow-panel" id="flow-panel" role="tabpanel" aria-live="polite"><div class="flow-panel-top"><span class="flow-stage" id="flow-stage"></span><span class="badge dark" id="flow-module"></span></div><h3 id="flow-title"></h3><p id="flow-description"></p><div class="io-grid"><div class="io"><span>Receives</span><strong id="flow-input"></strong></div><div class="io"><span>Produces</span><strong id="flow-output"></strong></div></div><div class="flow-insight"><b aria-hidden="true">↳</b><span id="flow-insight"></span></div><div class="flow-tags" id="flow-tags"></div></article></div>
+      </div>
+    </section>
+
+    <section class="section" id="narration" data-track>
+      <div class="container">
+        <div class="section-head reveal"><span class="eyebrow">Document understanding</span><h2>Visual structure has to become audible context.</h2><p>Markdown syntax is useful on a screen, but a TTS model only receives linear text. SpeakMD translates meaning instead of silently stripping markup.</p></div>
+        <div class="studio card reveal">
+          <div class="toolbar"><div><div class="kicker">Transformation studio</div><h3 style="margin:0">See what the listener hears</h3></div><div class="segment-wrap" id="narration-tabs" role="tablist" aria-label="Narration examples"><button class="segment" type="button" role="tab" aria-selected="true" data-example="heading">Heading</button><button class="segment" type="button" role="tab" aria-selected="false" data-example="table">Table</button><button class="segment" type="button" role="tab" aria-selected="false" data-example="code">Code</button><button class="segment" type="button" role="tab" aria-selected="false" data-example="link">Link</button><button class="segment" type="button" role="tab" aria-selected="false" data-example="task">Task</button></div></div>
+          <div class="transform" role="tabpanel" aria-live="polite"><div class="transform-side"><div class="transform-label"><span>Markdown source</span><span class="badge">visual form</span></div><pre class="code-sample" id="example-source"></pre></div><div class="transform-side"><div class="transform-label"><span>Speech-friendly form</span><span class="badge accent">narration block</span></div><div class="spoken"><span class="speaker" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 9v6h4l5 4V5L9 9H5Z"/><path d="M17 9.5a4 4 0 0 1 0 5"/></svg></span><span id="example-spoken"></span></div><p class="transform-note" id="example-note"></p></div></div>
+        </div>
+        <div class="chunk-grid reveal"><article class="chunk-copy card"><div class="kicker">Why chunking is semantic</div><h3>Boundaries follow meaning before character count.</h3><p>The default ceiling is 360 characters. The planner prefers complete structures and only hard-splits an unusually long unbroken token.</p><div class="rules"><div class="rule"><span>1</span><div>Prefer headings, paragraphs, table rows, and code boundaries.</div></div><div class="rule"><span>2</span><div>Then prefer complete sentences and whitespace.</div></div><div class="rule"><span>3</span><div>Repeat context for split table rows and code continuations.</div></div><div class="rule"><span>4</span><div>Add a structure-aware pause after every chunk.</div></div></div></article><div class="chunk-viz card" aria-label="Conceptual semantic chunk plan"><div class="chunk-viz-head"><div><span>PLANNER OUTPUT</span><strong>Meaningful speech units</strong></div><span>max_chars = 360</span></div><div class="chunk-row"><span class="chunk-block heading">Heading</span><span class="chunk-block prose">Paragraph sentences</span><span class="chunk-block table">Self-contained table row</span><span class="chunk-block codeblock">Code line(s)</span></div><div class="boundaries"><span class="boundary">chunk 0001 · heading pause</span><span class="boundary">chunk 0002 · table pause</span><span class="boundary">chunk 0003 · code boundary</span></div></div></div>
+      </div>
+    </section>
+
+    <section class="section" id="architecture" data-track>
+      <div class="container">
+        <div class="section-head reveal"><span class="eyebrow">System architecture</span><h2>Thin HTTP. Shared memory. Durable disk.</h2><p>The architecture stays deliberately small. Select a layer to understand where it runs and what it owns.</p></div>
+        <div class="arch-layout reveal">
+          <div class="arch-map card"><div class="map-label"><span>Process & persistence map</span><span class="badge accent"><span class="dot"></span> one local process</span></div><div class="layer-stack" id="arch-nodes">
+            <button class="arch-node" type="button" data-node="browser" aria-pressed="true"><span class="node-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 8h18"/></svg></span><span><strong>Browser UI</strong><small>static/index.html</small></span><span class="node-mode">polls</span></button>
+            <button class="arch-node" type="button" data-node="api" aria-pressed="false"><span class="node-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 5h14v14H5zM9 9h6v6H9z"/></svg></span><span><strong>FastAPI + Uvicorn</strong><small>app.py · async HTTP</small></span><span class="node-mode">routes</span></button>
+            <button class="arch-node" type="button" data-node="manager" aria-pressed="false"><span class="node-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M4 12h16M4 17h10"/><circle cx="18" cy="17" r="2"/></svg></span><span><strong>JobManager</strong><small>jobs.py · state + queue</small></span><span class="node-mode">coordinates</span></button>
+            <button class="arch-node" type="button" data-node="worker" aria-pressed="false"><span class="node-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 3h12v18H6zM9 7h6M9 11h6M9 15h3"/></svg></span><span><strong>Worker thread</strong><small>one job · one renderer</small></span><span class="node-mode">blocks</span></button>
+            <button class="arch-node" type="button" data-node="disk" aria-pressed="false"><span class="node-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v7c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12v7c0 1.7 3.6 3 8 3s8-1.3 8-3v-7"/></svg></span><span><strong>Output directory</strong><small>job.json · WAVs · final/</small></span><span class="node-mode">persists</span></button>
+          </div><div class="external" aria-label="Optional external dependencies"><span>Kokoro / PyTorch</span><span>ffmpeg, if present</span><span>nvidia-smi, if present</span></div></div>
+          <aside class="arch-detail card dark-panel" aria-live="polite"><span class="eyebrow" id="arch-eyebrow">Layer 01</span><h3 id="arch-title">Browser UI</h3><p id="arch-copy">A dependency-free page uploads the document, sends settings, renders state, and exposes controls and output links.</p><div class="detail-facts"><div class="detail-fact"><span>Communication</span><strong id="arch-communication">HTTP JSON + multipart upload</strong></div><div class="detail-fact"><span>Cadence</span><strong id="arch-cadence">Jobs: 1s · metrics: 2s</strong></div><div class="detail-fact"><span>Analogue</span><strong id="arch-analogue">Plain SPA served by Express</strong></div></div></aside>
+        </div>
+        <div class="arch-truths reveal"><article class="truth card"><strong>Async at the edge</strong><p>Route handlers use <code>async def</code>, keeping polling and controls responsive.</p></article><article class="truth card"><strong>Blocking in the worker</strong><p>Parsing, inference, file I/O, and ffmpeg run away from the HTTP event loop.</p></article><article class="truth card"><strong>No distributed queue</strong><p><code>queue.Queue</code>, <code>threading.Thread</code>, and <code>RLock</code> share one interpreter.</p></article></div>
+      </div>
+    </section>
+
+    <section class="section" id="recovery" data-track>
+      <div class="container">
+        <div class="section-head reveal"><span class="eyebrow">Recovery, made visible</span><h2>The system is designed around interruption.</h2><p>Speech inference cannot be safely stopped mid-call. SpeakMD makes the boundaries around each call reliable instead.</p></div>
+        <div class="lab card reveal"><div class="lab-top"><div><div class="kicker">Interruption lab</div><h3>What happens to chunk 0003?</h3></div><div class="scenario-switch" role="group" aria-label="Choose an interruption scenario"><button class="scenario-button" type="button" data-scenario="pause" aria-pressed="true">Pause requested</button><button class="scenario-button" type="button" data-scenario="crash" aria-pressed="false">Process crashes</button><button class="scenario-button" type="button" data-scenario="cancel" aria-pressed="false">Cancel requested</button></div></div><div class="lab-body"><div class="checkpoint-stage"><div class="checkpoint-head"><strong>Durable WAV checkpoints</strong><span id="checkpoint-state">state: paused</span></div><div class="checkpoint-line" id="checkpoint-line" aria-live="polite"></div><div class="checkpoint-caption" id="checkpoint-caption"></div></div><div class="scenario-copy" aria-live="polite"><span class="badge accent" id="scenario-badge">Safe boundary</span><h3 id="scenario-title"></h3><p id="scenario-description"></p><div class="scenario-steps" id="scenario-steps"></div></div></div></div>
+        <div class="callout reveal" style="margin-top:24px"><span class="callout-mark">!</span><div><strong>The atomic ordering is the reliability trick.</strong><p>A chunk WAV is atomically written before <code>job.json</code> is updated. If the process dies between those writes, startup reconciliation detects the valid WAV and adopts it as completed.</p></div></div>
+        <div class="controls reveal"><article class="control card"><div class="kicker">Pause</div><strong>Finish, save, stop</strong><p>The current chunk is kept; resume starts at the first missing checkpoint.</p></article><article class="control card"><div class="kicker">Cancel</div><strong>Discard in-flight only</strong><p>Completed chunks stay on disk; audio still inside inference is dropped.</p></article><article class="control card"><div class="kicker">Retry</div><strong>Redo failed work</strong><p>Failed chunks return to pending, or final assembly runs again without valid audio being regenerated.</p></article><article class="control card"><div class="kicker">Restart</div><strong>Reconcile, then continue</strong><p>Interrupted jobs are re-queued and every checkpoint is validated before synthesis.</p></article></div>
+      </div>
+    </section>
+
+    <section class="section" id="developer" data-track>
+      <div class="container">
+        <div class="section-head reveal"><span class="eyebrow">Developer mental model</span><h2>Know Node? Learn Python through the code you are reading.</h2><p>The implementation is conventional Python. Start with the ecosystem map, then compare real SpeakMD patterns directly with their TypeScript equivalents.</p></div>
+        <div class="dev-shell card reveal"><div class="toolbar"><h3 style="margin:0">Translate the codebase</h3><div class="segment-wrap" role="tablist" aria-label="Developer views" id="dev-tabs"><button class="segment" type="button" role="tab" aria-selected="true" data-dev="stack">Stack map</button><button class="segment" type="button" role="tab" aria-selected="false" data-dev="modules">Module map</button><button class="segment" type="button" role="tab" aria-selected="false" data-dev="runtime">Run it</button></div></div>
+          <div class="dev-panel" id="dev-stack" role="tabpanel"><table class="bridge"><thead><tr><th>Concern</th><th>SpeakMD</th><th>Node / TypeScript bridge</th></tr></thead><tbody><tr><td>HTTP application</td><td><code>FastAPI</code> + <code>Uvicorn</code></td><td>Express / NestJS on Node HTTP</td></tr><tr><td>In-memory work</td><td><code>queue.Queue</code> + thread</td><td>A serialized worker with shared memory—not BullMQ</td></tr><tr><td>Project manifest</td><td><code>pyproject.toml</code></td><td><code>package.json</code> + parts of tsconfig/Jest config</td></tr><tr><td>Local environment</td><td><code>.venv</code> managed by <code>uv</code></td><td><code>node_modules</code> plus a project-pinned runtime</td></tr><tr><td>Data models</td><td>Frozen dataclasses + dictionaries</td><td>Readonly interfaces plus runtime objects</td></tr><tr><td>Tests</td><td><code>pytest</code> fixtures and plain <code>assert</code></td><td>Jest / Vitest with injected setup helpers</td></tr></tbody></table></div>
+          <div class="dev-panel" id="dev-modules" role="tabpanel" hidden><div class="module-map"><pre class="module-tree">app.py
+├── jobs.py
+│   ├── markdown_speech.py
+│   ├── chunking.py
+│   ├── tts.py
+│   └── audio.py
+└── monitor.py
+
+static/index.html  · HTTP only</pre><div class="module-notes"><div class="module-note"><code>app.py</code><p>Routes, lifecycle, static files, and the process entry point.</p></div><div class="module-note"><code>jobs.py</code><p>Persistent state, queueing, recovery, controls, and the worker state machine.</p></div><div class="module-note"><code>markdown_speech.py</code><p>Markdown tokens become explicit narration blocks and warnings.</p></div><div class="module-note"><code>chunking.py</code><p>Blocks become structure-aware speech chunks.</p></div><div class="module-note"><code>tts.py + audio.py</code><p>Model rendering, atomic WAV I/O, and final MP3 encoding.</p></div></div></div></div>
+          <div class="dev-panel" id="dev-runtime" role="tabpanel" hidden><div class="runtime-grid"><article class="runtime-card"><span class="step-number">01</span><h3>Install Python</h3><p>The supported window is Python 3.11 or 3.12.</p><pre>uv python install 3.12</pre></article><article class="runtime-card"><span class="step-number">02</span><h3>Sync dependencies</h3><p><code>uv</code> creates <code>.venv</code> and installs the locked graph.</p><pre>uv sync --extra dev</pre></article><article class="runtime-card"><span class="step-number">03</span><h3>Start locally</h3><p>Uvicorn binds to loopback on port 8000 by default.</p><pre>uv run speakmd</pre></article></div></div>
+        </div>
+
+        <div class="python-intro reveal">
+          <div><span class="eyebrow">Python code decoder</span><h3>Read the syntax by intent, not character by character.</h3><p>Choose a concept to compare a pattern used by SpeakMD with the TypeScript you already know. Each lesson calls out the Python-specific behavior that matters at runtime.</p></div>
+          <span class="badge accent"><span class="dot"></span> 6 guided comparisons</span>
+        </div>
+
+        <div class="python-walkthrough card reveal">
+          <div class="python-rail" id="python-tabs" role="tablist" aria-label="Python code walkthrough topics"><div class="python-rail-label">Choose a concept</div></div>
+          <article class="python-lesson" id="python-lesson" role="tabpanel" aria-live="polite">
+            <div class="lesson-top"><div><div class="kicker" id="python-module"></div><h3 id="python-title"></h3><p id="python-summary"></p></div><span class="badge" id="python-count"></span></div>
+            <div class="code-compare">
+              <div class="code-pane"><div class="code-pane-head"><span>Python</span><span>SpeakMD pattern</span></div><pre id="python-code"></pre></div>
+              <div class="code-pane ts"><div class="code-pane-head"><span>TypeScript</span><span>mental bridge</span></div><pre id="typescript-code"></pre></div>
+            </div>
+            <div class="annotations" id="python-annotations"></div>
+            <div class="python-gotcha"><span aria-hidden="true">⚠</span><div><strong>Watch for this:</strong> <span id="python-gotcha"></span></div></div>
+          </article>
+        </div>
+
+        <div class="ecosystem card reveal">
+          <div class="ecosystem-head"><div><div class="kicker">The Python project lifecycle</div><h3>From checkout to a running SpeakMD process</h3><p>Python separates the interpreter, environment, installed package, and server more explicitly than a typical Node project. Here is the path this repository actually follows.</p></div><span class="badge">No global activation required</span></div>
+          <div class="ecosystem-steps">
+            <article class="eco-step"><span>01 / RUNTIME</span><strong>Choose Python 3.11 or 3.12</strong><p><code>uv</code> can install the supported interpreter, playing an nvm-like role.</p><code>uv python install 3.12</code></article>
+            <article class="eco-step"><span>02 / RESOLVE</span><strong>Sync the locked graph</strong><p><code>pyproject.toml</code> declares the project; <code>uv.lock</code> pins its transitive dependencies.</p><code>uv sync --extra dev</code></article>
+            <article class="eco-step"><span>03 / ISOLATE</span><strong>Create <code>.venv</code></strong><p>The environment contains a project-local interpreter and <code>site-packages</code>, not only dependencies.</p><code>.venv/</code></article>
+            <article class="eco-step"><span>04 / INSTALL</span><strong>Use the src layout</strong><p><code>speakmd</code> is installed in editable mode, so imports resolve as a real package rather than an accidental source path.</p><code>src/speakmd/</code></article>
+            <article class="eco-step"><span>05 / START</span><strong>Resolve the console script</strong><p><code>uv run</code> uses the local environment, calls <code>speakmd.app:main</code>, then Uvicorn imports the FastAPI app.</p><code>uv run speakmd</code></article>
+          </div>
+        </div>
+
+        <div class="python-quick reveal" aria-label="Important Python differences from JavaScript">
+          <article class="quick-note card"><strong>Hints are optional at runtime</strong><p><code>x: str</code> communicates intent, but this repository does not configure mypy or Pyright. <code>from __future__ import annotations</code> stores hints lazily; FastAPI only enforces annotations it explicitly inspects.</p></article>
+          <article class="quick-note card"><strong><code>None</code>, but no <code>undefined</code></strong><p>A missing dictionary key raises <code>KeyError</code> unless <code>.get()</code> is used. Also, empty <code>[]</code> and <code>{}</code> are falsy in Python—unlike JavaScript.</p></article>
+          <article class="quick-note card"><strong>pytest injects fixtures by name</strong><p>A test parameter named <code>tmp_path</code> or <code>monkeypatch</code> receives a built-in fixture. Plain <code>assert</code> replaces Jest’s <code>expect</code> API.</p></article>
+          <article class="quick-note card"><strong>Text and bytes are distinct</strong><p>Uploads arrive as <code>bytes</code>, decode with UTF-8, and are hashed as bytes. Python <code>str</code> is text. An f-string such as <code>f"Chunk {index}"</code> is the template-literal equivalent.</p></article>
+          <article class="quick-note card"><strong>Job state is plain runtime data</strong><p><code>dict</code>, <code>list</code>, and <code>set</code> map roughly to object/Map, Array, and Set. <code>json.loads</code> parses; <code>json.dump</code> writes. Jobs use dictionaries rather than Pydantic models.</p></article>
+          <article class="quick-note card"><strong>Environment reads are direct</strong><p><code>os.environ.get("SPEAKMD_PORT", "8000")</code> is the <code>process.env</code> bridge. There is no dotenv layer, and <code>SPEAKMD_OUTPUT</code> must be set before <code>app.py</code> is imported.</p></article>
+        </div>
+
+        <div class="deep-dives reveal">
+          <details class="deep"><summary><span>01</span><span>What exactly gets stored for a job?</span></summary><div class="deep-content"><p>A stable directory is derived from the filename, source hash, and settings hash. It contains the source document, persisted state, independent WAV chunks, and final outputs.</p><div class="fact-grid"><div class="mini-fact"><strong><code>input.md</code></strong><span>The UTF-8 source document</span></div><div class="mini-fact"><strong><code>job.json</code></strong><span>Settings, chunks, attempts, timing, errors</span></div><div class="mini-fact"><strong><code>chunks/0001.wav</code></strong><span>Mono 24 kHz durable checkpoints</span></div></div></div></details>
+          <details class="deep"><summary><span>02</span><span>Which dependencies are optional at runtime?</span></summary><div class="deep-content"><p>Kokoro and PyTorch run in-process; model files download from Hugging Face on first use. <code>ffmpeg</code> and <code>nvidia-smi</code> are external binaries. Missing ffmpeg means WAV-only completion; missing nvidia-smi means unavailable GPU metrics. CPU synthesis remains supported.</p></div></details>
+          <details class="deep"><summary><span>03</span><span>How are duplicate uploads reused?</span></summary><div class="deep-content"><p>The ID combines a slug, the first 12 characters of the source SHA-256, and the first 8 characters of a settings hash. Uploading identical bytes with identical settings reopens the existing directory. Voice, speed, device, maximum characters, and chunking version all influence identity.</p></div></details>
+          <details class="deep"><summary><span>04</span><span>What is covered by the documented test suite?</span></summary><div class="deep-content"><p>The deterministic tone renderer lets the documented tests cover narration fidelity, semantic chunk limits, table-row context, pause/resume, restart recovery, checkpoint reuse, and final audio construction without downloading model assets. HTTP routes, Kokoro itself, resource metrics, and several validation edges are not covered there.</p></div></details>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="check" data-track>
+      <div class="container">
+        <div class="section-head center reveal"><span class="eyebrow">Knowledge check</span><h2>Can you reason like the worker—and read its Python?</h2><p>Six quick questions. Each answer explains the underlying design or language decision.</p></div>
+        <div class="quiz-shell card reveal"><div class="quiz-main" id="quiz-main" aria-live="polite"><div class="quiz-progress" id="quiz-progress" aria-hidden="true"></div><div class="quiz-count" id="quiz-count"></div><h3 class="quiz-question" id="quiz-question" tabindex="-1"></h3><div class="quiz-answers" id="quiz-answers"></div><div class="quiz-feedback" id="quiz-feedback"></div><button class="button quiz-next" type="button" id="quiz-next" hidden>Next question</button></div><aside class="quiz-aside"><div class="score-ring" id="score-ring" style="--score-angle:0deg"><strong id="quiz-score">0/6</strong></div><div><div class="kicker" style="color:#6fd8b1">Learning signal</div><h3>Your mental model</h3><p id="score-copy">Answering updates this score. You can retry the complete set at the end.</p><span class="tiny">No data is stored or sent anywhere.</span></div></aside></div>
+      </div>
+    </section>
+
+    <section class="compact" id="takeaways"><div class="container"><div class="takeaway-panel reveal"><span class="eyebrow">Keep this model</span><h2>SpeakMD trades infrastructure for carefully ordered local state.</h2><p>The application is small because its promises are precise: one trusted user, one model, one worker, and independently recoverable audio units.</p><div class="takeaways"><article class="takeaway"><span>01</span><strong>Markdown becomes narration, not HTML.</strong></article><article class="takeaway"><span>02</span><strong>Semantic chunks are the unit of work.</strong></article><article class="takeaway"><span>03</span><strong>Atomic WAVs make progress durable.</strong></article><article class="takeaway"><span>04</span><strong>The filesystem is the persistence layer.</strong></article></div></div></div></section>
+  </main>
+
+  <footer><div class="container footer-row"><span>Built from the repository’s code-backed <code>how-the-application-works.md</code>.</span><a href="#overview">Back to the beginning ↑</a></div></footer>
+
+  <script>
+    (() => {
+      'use strict';
+      const $ = (selector, root = document) => root.querySelector(selector);
+      const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
+
+      /* Theme */
+      const themeButton = $('#theme');
+      let storedTheme = null;
+      try { storedTheme = localStorage.getItem('speakmd-guide-theme'); } catch (_) {}
+      const preferDark = matchMedia?.('(prefers-color-scheme: dark)').matches;
+      function setTheme(theme) {
+        const dark = theme === 'dark';
+        document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+        themeButton.setAttribute('aria-pressed', String(dark));
+        themeButton.setAttribute('aria-label', dark ? 'Switch to light theme' : 'Switch to dark theme');
+        $('meta[name="theme-color"]').content = dark ? '#101813' : '#f5f5f0';
+      }
+      setTheme(storedTheme || (preferDark ? 'dark' : 'light'));
+      themeButton.addEventListener('click', () => { const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'; setTheme(next); try { localStorage.setItem('speakmd-guide-theme', next); } catch (_) {} });
+
+      /* Hero pipeline */
+      const heroSteps = $$('.mini-step', $('#hero-pipeline'));
+      const heroLabels = ['Narrating document structure…','Planning semantic chunks…','Synthesizing one chunk…','Writing an atomic WAV…','Assembling the final audio…'];
+      let heroIndex = 0;
+      if (!matchMedia('(prefers-reduced-motion: reduce)').matches) setInterval(() => { heroIndex = (heroIndex + 1) % heroSteps.length; heroSteps.forEach((step,index) => step.classList.toggle('active', index === heroIndex)); $('#hero-stage').textContent = heroLabels[heroIndex]; }, 2400);
+
+      /* Interactive end-to-end flow */
+      const flow = [
+        {name:'Upload & identify',module:'app.py → jobs.py',title:'Validate once. Reuse when possible.',description:'The browser sends a Markdown file plus voice, speed, device, and chunk-size settings. The server validates the upload and derives a stable identity from its bytes and cleaned settings.',input:'Multipart file + settings JSON string',output:'input.md + queued job.json + stable job ID',insight:'The same bytes and same settings reopen an existing job, so completed audio is not synthesized again.',tags:['UTF-8','100 MiB cap','SHA-256','atomic JSON']},
+        {name:'Narrate Markdown',module:'markdown_speech.py',title:'Translate visual structure into language.',description:'A CommonMark token stream is walked into narration blocks. Headings are named, table rows repeat their headers, URLs are spelled, and code punctuation is made explicit.',input:'Markdown source text',output:'NarrationBlock[] + warnings',insight:'Content-bearing syntax is represented instead of silently disappearing. Unknown content produces a warning.',tags:['markdown-it-py','dataclasses','tables','code','links']},
+        {name:'Plan chunks',module:'chunking.py',title:'Make utterances fit without losing context.',description:'Narration blocks are packed under a character ceiling. The planner prefers structure, then sentences, then whitespace; continuations repeat table or code context.',input:'NarrationBlock[] + max_chars',output:'SpeechChunk[] with pauses and source ranges',insight:'The default ceiling is 360 characters. Headings, code, thematic breaks, and table rows receive special boundary rules.',tags:['semantic split','360 chars','pause_after','chunking version']},
+        {name:'Queue the job',module:'jobs.py',title:'Hand heavy work to one model owner.',description:'The job ID enters an in-process queue. A single daemon worker takes one job at a time while HTTP remains responsive for polling, metrics, and controls.',input:'Queued job ID',output:'One active job on the worker thread',insight:'This is a shared-memory thread and queue—not Redis, a message broker, or a separate process.',tags:['queue.Queue','threading.Thread','RLock','shared memory']},
+        {name:'Synthesize & save',module:'tts.py + audio.py',title:'Turn every chunk into a durable checkpoint.',description:'Kokoro generates a float waveform on CPU or CUDA. SpeakMD appends planned silence, writes a mono 24 kHz WAV atomically, then marks the chunk completed.',input:'Chunk text + voice + speed',output:'chunks/0001.wav + completed chunk state',insight:'The renderer is reused per device. Tests swap in a deterministic 220 Hz tone renderer instead of downloading model assets.',tags:['Kokoro-82M','CPU / CUDA','24 kHz mono','fsync + replace']},
+        {name:'Assemble output',module:'audio.py',title:'Stream checkpoints into listening formats.',description:'Completed WAV chunks are validated and concatenated by streaming frames. Then ffmpeg is asked to encode a compact mono MP3 at 64 kb/s.',input:'Ordered, valid checkpoint WAVs',output:'final/<name>.wav + optional .mp3',insight:'Missing or failed ffmpeg becomes a warning. The lossless final WAV still completes successfully.',tags:['streaming frames','atomic final file','ffmpeg','64 kb/s mono']},
+        {name:'Poll & listen',module:'static/index.html',title:'Make long work understandable and controllable.',description:'The UI polls job state once a second and system metrics every two seconds. It exposes progress, ETA, queue state, controls, and download links.',input:'Job summaries + metrics JSON',output:'Visible progress, controls, WAV/MP3 links',insight:'There are no WebSockets or server-sent events. The latest updated job is restored when the page loads.',tags:['1s polling','2s metrics','/files mount','no frontend build']}
+      ];
+      const flowTabs = $('#flow-tabs');
+      flowTabs.innerHTML = flow.map((step,index) => `<button class="flow-tab" type="button" role="tab" id="flow-tab-${index}" aria-selected="${index === 0}" data-index="${index}"><span class="flow-index">${String(index+1).padStart(2,'0')}</span><span><span class="flow-name">${step.name}</span><span class="flow-module">${step.module}</span></span><span class="flow-arrow" aria-hidden="true">→</span></button>`).join('');
+      function renderFlow(index, focus = false) { const step=flow[index]; $$('.flow-tab',flowTabs).forEach((button,i)=>{button.setAttribute('aria-selected',String(i===index));button.tabIndex=i===index?0:-1}); $('#flow-stage').textContent=`Stage ${String(index+1).padStart(2,'0')} of ${String(flow.length).padStart(2,'0')}`; $('#flow-module').textContent=step.module; $('#flow-title').textContent=step.title; $('#flow-description').textContent=step.description; $('#flow-input').textContent=step.input; $('#flow-output').textContent=step.output; $('#flow-insight').textContent=step.insight; $('#flow-tags').innerHTML=step.tags.map(tag=>`<span class="flow-tag">${tag}</span>`).join(''); $('#flow-panel').setAttribute('aria-labelledby',`flow-tab-${index}`); if(focus)$(`[data-index="${index}"]`,flowTabs).focus() }
+      renderFlow(0);
+      flowTabs.addEventListener('click',event=>{const button=event.target.closest('[data-index]');if(button)renderFlow(Number(button.dataset.index))});
+      flowTabs.addEventListener('keydown',event=>{if(!['ArrowDown','ArrowUp','ArrowRight','ArrowLeft','Home','End'].includes(event.key))return;event.preventDefault();const current=Number(document.activeElement?.dataset.index||0);let next=current;if(event.key==='Home')next=0;else if(event.key==='End')next=flow.length-1;else if(['ArrowDown','ArrowRight'].includes(event.key))next=(current+1)%flow.length;else next=(current-1+flow.length)%flow.length;renderFlow(next,true)});
+
+      /* Narration studio */
+      const examples = {
+        heading:{source:'# Important heading',spoken:'Heading level 1: Important heading',note:'The level remains audible and the heading starts a new chunk, but it may share that chunk with the paragraph that follows.'},
+        table:{source:'| Name  | Age | Location |\n|-------|-----|----------|\n| Sarah | 28  | Paris    |',spoken:'Table 1 has 3 columns: Name, Age, Location. It has 1 data row. Table 1, row 1: Name: Sarah. Age: 28. Location: Paris.',note:'Every row repeats its header names, so a checkpoint is understandable and retryable on its own.'},
+        code:{source:'```python\ndef hello(name):\n    return f"Hello {name}"\n```',spoken:'Code block in python. Line 1: def hello open parenthesis name close parenthesis colon. Line 2: return f"Hello open brace name close brace ".',note:'Fenced lines are numbered. A punctuation lexicon names symbols, and camelCase identifiers are split for pronunciation.'},
+        link:{source:'[the docs](https://example.com/a-b)',spoken:'link the docs link target example dot com slash a dash b',note:'Visible text is preserved, then the destination is normalized into speech-friendly words.'},
+        task:{source:'- [x] Completed task\n- [ ] Incomplete task',spoken:'completed task Completed task. incomplete task Incomplete task.',note:'Task state is explicit. Lists also retain item position, and blockquotes begin with “Quotation.”'}
+      };
+      function renderExample(key){const item=examples[key];$('#example-source').textContent=item.source;$('#example-spoken').textContent=item.spoken;$('#example-note').textContent=item.note;$$('.segment',$('#narration-tabs')).forEach(tab=>{tab.setAttribute('aria-selected',String(tab.dataset.example===key));tab.tabIndex=tab.dataset.example===key?0:-1})}
+      renderExample('heading');$('#narration-tabs').addEventListener('click',event=>{const tab=event.target.closest('[data-example]');if(tab)renderExample(tab.dataset.example)});
+
+      function enableArrowKeyTabs(container) {
+        container.addEventListener('keydown', event => {
+          if (!['ArrowLeft','ArrowRight','Home','End'].includes(event.key)) return;
+          const tabs = $$('.segment', container);
+          const current = Math.max(0, tabs.indexOf(document.activeElement));
+          const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : event.key === 'ArrowRight' ? (current + 1) % tabs.length : (current - 1 + tabs.length) % tabs.length;
+          event.preventDefault(); tabs[next].focus(); tabs[next].click();
+        });
+      }
+      enableArrowKeyTabs($('#narration-tabs'));
+
+      /* Architecture explorer */
+      const arch = {
+        browser:{eyebrow:'Layer 01',title:'Browser UI',copy:'A dependency-free page uploads the document, sends settings, renders state, and exposes controls and output links.',communication:'HTTP JSON + multipart upload',cadence:'Jobs: 1s · metrics: 2s',analogue:'Plain SPA served by Express'},
+        api:{eyebrow:'Layer 02',title:'FastAPI + Uvicorn',copy:'Async route handlers validate the HTTP boundary and delegate immediately. Heavy parsing and speech work never runs inside the request handler.',communication:'ASGI routes + application lifespan',cadence:'Responsive while worker blocks',analogue:'Express / NestJS controllers'},
+        manager:{eyebrow:'Layer 03',title:'JobManager',copy:'The thread-safe domain layer owns job identity, persisted state, queue membership, control flags, summaries, recovery, and renderer reuse.',communication:'In-process calls + RLock',cadence:'State saved after every transition',analogue:'Service layer + queue coordinator'},
+        worker:{eyebrow:'Layer 04',title:'Worker thread',copy:'One daemon thread owns the loaded TTS model and processes one document at a time using blocking calls for parsing, synthesis, file I/O, and ffmpeg.',communication:'queue.Queue of job IDs',cadence:'One chunk, then a safe boundary',analogue:'Shared-memory serialized worker'},
+        disk:{eyebrow:'Layer 05',title:'Output directory',copy:'Every job directory contains source input, atomically replaced JSON state, individually validatable WAV checkpoints, and assembled outputs.',communication:'Path-based atomic file I/O',cadence:'Durable before status advances',analogue:'Database + object storage'}
+      };
+      function renderArch(key){const item=arch[key];$$('.arch-node').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.node===key)));$('#arch-eyebrow').textContent=item.eyebrow;$('#arch-title').textContent=item.title;$('#arch-copy').textContent=item.copy;$('#arch-communication').textContent=item.communication;$('#arch-cadence').textContent=item.cadence;$('#arch-analogue').textContent=item.analogue}
+      $('#arch-nodes').addEventListener('click',event=>{const button=event.target.closest('[data-node]');if(button)renderArch(button.dataset.node)});
+
+      /* Interruption lab */
+      const scenarios = {
+        pause:{state:'state: paused',badge:'Safe boundary',title:'Finish chunk 0003, save it, then pause.',description:'A pause flag does not interrupt Kokoro mid-inference. The worker finishes the call, appends silence, atomically writes the WAV, and then stops.',statuses:['saved','saved','saved','paused','paused'],labels:['saved','saved','saved','waiting','waiting'],caption:'Resume later: checkpoints 0001–0003 are valid, so work continues at 0004.',steps:['Pause flag arrives while synthesis is active.','0003.wav is written and marked completed.','Job state becomes paused before the next chunk.']},
+        crash:{state:'state: recovered → queued',badge:'Startup recovery',title:'Lose at most the in-flight chunk.',description:'If the process dies before chunk 0003 finishes, the partial temp file is invalid. Startup re-queues the job, validates disk state, and resets that chunk to pending.',statuses:['saved','saved','retry','paused','paused'],labels:['valid','valid','retry','waiting','waiting'],caption:'If 0003.wav completed before the JSON update, reconciliation adopts the valid WAV instead of retrying it.',steps:['Interrupted processing state is recovered to queued.','Every declared checkpoint is validated on disk.','Synthesis resumes at the first non-completed chunk.']},
+        cancel:{state:'state: cancelled',badge:'Intentional stop',title:'Discard chunk 0003; keep earlier work.',description:'A cancel request received during inference is checked as soon as the model returns. The in-flight waveform is dropped, but all previously completed checkpoints remain.',statuses:['saved','saved','discarded','stopped','stopped'],labels:['saved','saved','dropped','stopped','stopped'],caption:'Cancellation preserves already completed chunk files; it does not assemble a final output.',steps:['Cancel flag arrives during the TTS call.','Returned audio for 0003 is intentionally discarded.','The job exits at a safe boundary as cancelled.']}
+      };
+      function renderScenario(key){const item=scenarios[key];$$('.scenario-button').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.scenario===key)));$('#checkpoint-state').textContent=item.state;$('#scenario-badge').textContent=item.badge;$('#scenario-title').textContent=item.title;$('#scenario-description').textContent=item.description;$('#checkpoint-caption').textContent=item.caption;$('#checkpoint-line').innerHTML=item.statuses.map((status,index)=>`<div class="checkpoint ${status}"><span class="checkpoint-box">${String(index+1).padStart(4,'0')}</span><strong>Chunk ${index+1}</strong><small>${item.labels[index]}</small></div>`).join('');$('#scenario-steps').innerHTML=item.steps.map((step,index)=>`<div class="scenario-step"><span>${index+1}</span><div>${step}</div></div>`).join('')}
+      renderScenario('pause');$('.scenario-switch').addEventListener('click',event=>{const button=event.target.closest('[data-scenario]');if(button)renderScenario(button.dataset.scenario)});
+
+      /* Developer tabs */
+      const devPanels={stack:$('#dev-stack'),modules:$('#dev-modules'),runtime:$('#dev-runtime')};
+      $('#dev-tabs').addEventListener('click',event=>{const tab=event.target.closest('[data-dev]');if(!tab)return;$$('.segment',$('#dev-tabs')).forEach(button=>{const active=button===tab;button.setAttribute('aria-selected',String(active));button.tabIndex=active?0:-1});Object.entries(devPanels).forEach(([key,panel])=>panel.hidden=key!==tab.dataset.dev)});
+      enableArrowKeyTabs($('#dev-tabs'));
+
+      /* Python code walkthrough */
+      const pythonLessons = [
+        {
+          label:'Functions & hints', bridge:'def ↔ function', module:'tts.py · chunking.py', title:'Functions look typed—but hints are not a runtime type system.',
+          summary:'Read def as function, the indented body as braces, and the arrow as a return annotation. Defaults and named arguments are first-class language features.',
+          python:`def choose_device(
+    requested: str = "auto"
+) -> str:
+    if requested == "cpu":
+        return "cpu"
+    # ...detect CUDA or fall back`,
+          typescript:`function chooseDevice(
+  requested: string = "auto"
+): string {
+  if (requested === "cpu") {
+    return "cpu";
+  }
+  // ...detect CUDA or fall back
+}`,
+          annotations:[
+            ['Blocks','Indentation is syntax. Dedenting closes a block; braces are not used.'],
+            ['Annotations','requested: str and -> str are readable by tools, but Python itself does not enforce them here.'],
+            ['Equality','Python uses == for value equality. There is no JavaScript-style === operator.'],
+            ['Named calls','Callers can write plan_chunks(blocks, max_chars=180), using a real keyword argument.']
+          ],
+          gotcha:'Never use a mutable list or dictionary as a default unless shared state is intentional. It is created once when the function is defined. SpeakMD’s defaults are immutable strings and integers.'
+        },
+        {
+          label:'Modules & imports', bridge:'.py ↔ ESM file', module:'app.py · tests/test_pipeline.py', title:'A .py file is a module; a package is the importable directory.',
+          summary:'Application modules use relative imports inside speakmd. Tests use the installed package name, proving the src layout works the same way after installation.',
+          python:`# Inside src/speakmd/app.py
+from .jobs import JobManager
+from .monitor import ResourceMonitor
+
+# Inside tests/test_pipeline.py
+from speakmd.jobs import JobManager`,
+          typescript:`// Inside a package module
+import { JobManager } from "./jobs.js";
+import { ResourceMonitor } from "./monitor.js";
+
+// From a consumer/test
+import { JobManager } from "speakmd/jobs";`,
+          annotations:[
+            ['Leading dot','from .jobs means “the jobs module in this same package.”'],
+            ['Package marker','__init__.py marks speakmd as a classic package; here it does not re-export other modules.'],
+            ['Src layout','Tests import speakmd, not src.speakmd, so they exercise the installed package.'],
+            ['Built-ins','json, os, pathlib, wave, and threading come from the standard library.']
+          ],
+          gotcha:'There is no __main__.py, so python -m speakmd is not an entry point. The supported command is the console script declared in pyproject.toml.'
+        },
+        {
+          label:'Classes & data', bridge:'self ↔ this', module:'chunking.py · jobs.py', title:'Classes are familiar; dataclasses remove the constructor boilerplate.',
+          summary:'self is an explicit first parameter, __init__ is the constructor, and @dataclass generates common methods for small data objects.',
+          python:`@dataclass(frozen=True)
+class SpeechChunk:
+    index: int
+    text: str
+    pause_after: float
+
+class JobStore:
+    def __init__(self, root: Path) -> None:
+        self.root = root
+        self._lock = threading.RLock()`,
+          typescript:`type SpeechChunk = Readonly<{
+  index: number;
+  text: string;
+  pauseAfter: number;
+}>;
+
+class JobStore {
+  private lock = new Mutex();
+  constructor(public root: Path) {}
+}`,
+          annotations:[
+            ['Decorator','@dataclass is a runtime function that transforms the class and generates init, equality, and repr behavior.'],
+            ['Frozen','frozen=True prevents field assignment after construction—runtime immutability, not only a readonly hint.'],
+            ['self','Python makes the receiving instance explicit in every instance method signature.'],
+            ['Internal names','A leading underscore communicates “internal”; it is a convention, not enforced privacy.']
+          ],
+          gotcha:'Instance attributes are usually created by assignment in __init__. A class attribute such as sample_rate = 24000 is shared through the class, closer to a static field.'
+        },
+        {
+          label:'Errors & cleanup', bridge:'except ↔ catch', module:'app.py · audio.py', title:'Exceptions cross layers; context managers make cleanup deterministic.',
+          summary:'SpeakMD maps domain errors to HTTP errors at the boundary and uses with blocks so files close even when work raises.',
+          python:`try:
+    parsed = json.loads(settings)
+except (ValueError, json.JSONDecodeError) as exc:
+    raise api_error(exc) from exc
+
+with open(path, "w", encoding="utf-8") as output:
+    json.dump(value, output)
+    output.flush()
+    os.fsync(output.fileno())`,
+          typescript:`try {
+  const parsed = JSON.parse(settings);
+} catch (error) {
+  throw new ApiError(error, { cause: error });
+}
+
+const output = await open(path, "w");
+try {
+  await output.writeFile(JSON.stringify(value));
+  await output.sync();
+} finally { await output.close(); }`,
+          annotations:[
+            ['except tuple','One handler can catch multiple exception classes. as exc binds the error value.'],
+            ['raise … from','Exception chaining preserves the original cause in the traceback.'],
+            ['with','A context manager guarantees teardown, similar to using or an explicit try/finally.'],
+            ['Specific failures','The code catches ValueError, FileNotFoundError, wave.Error, and OSError where appropriate.']
+          ],
+          gotcha:'except Exception is reserved here for the worker’s last-resort guard so one job cannot kill the thread. A bare except would also swallow system-exiting exceptions and is avoided.'
+        },
+        {
+          label:'Collections & paths', bridge:'comprehension ↔ filter', module:'jobs.py · audio.py', title:'Python favors comprehensions and objects for paths.',
+          summary:'Lists and dictionaries are runtime data structures, Path composes filesystem operations, and the walrus operator assigns inside an expression.',
+          python:`completed = [
+    state for state in states
+    if state["status"] == "completed"
+]
+
+job_file = self.root / job_id / "job.json"
+
+while frames := source.readframes(65536):
+    output.writeframes(frames)`,
+          typescript:`const completed = states.filter(
+  state => state.status === "completed"
+);
+
+const jobFile = path.join(root, jobId, "job.json");
+
+while ((frames = source.readFrames(65536))) {
+  output.writeFrames(frames);
+}`,
+          annotations:[
+            ['Comprehension','Read it as: produce state, for every state in states, if the condition passes.'],
+            ['Dictionary access','state["status"] reads a required key. state.get("status") would return None when missing.'],
+            ['Path division','Path overloads / to join segments; methods then read, create, resolve, or inspect paths.'],
+            ['Walrus :=','Assign frames and use its value in the while condition; empty bytes end the loop.']
+          ],
+          gotcha:'Python empty lists and dictionaries are falsy. That differs from JavaScript, where [] and {} are truthy. Python also has None but no undefined.'
+        },
+        {
+          label:'Async & threads', bridge:'asyncio + shared memory', module:'app.py · jobs.py', title:'Async serves HTTP; one ordinary thread performs blocking speech work.',
+          summary:'The split is intentional: small async route handlers stay responsive while a shared-memory worker owns Kokoro and performs synchronous inference and file I/O.',
+          python:`@asynccontextmanager
+async def lifespan(app: FastAPI):
+    app.state.manager = JobManager(OUTPUT_ROOT)
+    yield
+    app.state.manager.shutdown()
+
+self._queue = queue.Queue()
+self._lock = threading.RLock()
+self._worker = threading.Thread(
+    target=self._work, daemon=True
+)`,
+          typescript:`async function runApp(app: App) {
+  const manager = new JobManager(OUTPUT_ROOT);
+  app.manager = manager;
+  try { await serve(app); }
+  finally { manager.shutdown(); }
+}
+
+// Rough concept only: a serialized queue plus mutex.
+// Python threads share objects and one interpreter;
+// Node worker_threads use separate V8 isolates.`,
+          annotations:[
+            ['Lifespan','Code before yield runs at startup; code after yield runs during shutdown.'],
+            ['Shared memory','The worker thread, HTTP side, queue, and manager see the same Python objects. RLock guards mutations.'],
+            ['The GIL','Only one thread executes Python bytecode at a time, but PyTorch, NumPy, CUDA, and I/O release it during heavy work.'],
+            ['One by policy','One job at a time protects model memory and simplifies controls; the GIL does not require this policy.']
+          ],
+          gotcha:'Do not call renderer.synthesize directly from an async route. It is blocking work and would freeze the event loop; keep it on the worker thread.'
+        }
+      ];
+
+      const pythonTabs = $('#python-tabs');
+      pythonTabs.insertAdjacentHTML('beforeend', pythonLessons.map((lesson,index)=>`<button class="python-tab" type="button" role="tab" id="python-tab-${index}" aria-selected="${index===0}" aria-controls="python-lesson" data-python-index="${index}"><span>${String(index+1).padStart(2,'0')}</span><span><strong>${lesson.label}</strong><small>${lesson.bridge}</small></span></button>`).join(''));
+      function renderPythonLesson(index, focus=false) {
+        const lesson=pythonLessons[index];
+        $$('.python-tab',pythonTabs).forEach((button,buttonIndex)=>{button.setAttribute('aria-selected',String(buttonIndex===index));button.tabIndex=buttonIndex===index?0:-1});
+        $('#python-module').textContent=lesson.module; $('#python-title').textContent=lesson.title; $('#python-summary').textContent=lesson.summary; $('#python-count').textContent=`${String(index+1).padStart(2,'0')} / ${String(pythonLessons.length).padStart(2,'0')}`;
+        $('#python-code').textContent=lesson.python; $('#typescript-code').textContent=lesson.typescript; $('#python-gotcha').textContent=lesson.gotcha;
+        $('#python-annotations').innerHTML=lesson.annotations.map((annotation,annotationIndex)=>`<div class="annotation"><span>${annotationIndex+1}</span><div><strong>${annotation[0]}</strong><p>${annotation[1]}</p></div></div>`).join('');
+        $('#python-lesson').setAttribute('aria-labelledby',`python-tab-${index}`); if(focus)$(`[data-python-index="${index}"]`,pythonTabs).focus();
+      }
+      renderPythonLesson(0);
+      pythonTabs.addEventListener('click',event=>{const button=event.target.closest('[data-python-index]');if(button)renderPythonLesson(Number(button.dataset.pythonIndex))});
+      pythonTabs.addEventListener('keydown',event=>{if(!['ArrowDown','ArrowUp','ArrowRight','ArrowLeft','Home','End'].includes(event.key))return;event.preventDefault();const current=Number(document.activeElement?.dataset.pythonIndex||0);let next=current;if(event.key==='Home')next=0;else if(event.key==='End')next=pythonLessons.length-1;else if(['ArrowDown','ArrowRight'].includes(event.key))next=(current+1)%pythonLessons.length;else next=(current-1+pythonLessons.length)%pythonLessons.length;renderPythonLesson(next,true)});
+
+      /* Quiz */
+      const quiz=[
+        {question:'Why does SpeakMD deliberately use a single worker?',answers:['Python cannot create more than one thread.','One model load keeps memory predictable and avoids GPU contention.','FastAPI only allows one background task.','WAV files cannot be written concurrently.'],correct:1,explanation:'The policy is architectural, not a Python limitation. One worker owns one loaded model, keeping RAM/VRAM predictable and controls straightforward.'},
+        {question:'A pause request arrives during Kokoro inference. What happens next?',answers:['Inference is terminated immediately.','The whole document starts again later.','The current chunk finishes and is saved before the job pauses.','The current and previous chunk are deleted.'],correct:2,explanation:'Synthesis cannot be safely interrupted mid-call. SpeakMD saves the current WAV, then enters the paused state with that checkpoint preserved.'},
+        {question:'A valid chunk WAV exists, but job.json still says that chunk was processing. What does recovery do?',answers:['Deletes the WAV and retries.','Marks the whole job failed.','Marks the chunk completed and reuses the WAV.','Waits for manual confirmation.'],correct:2,explanation:'The WAV is written before JSON status advances. Reconciliation trusts a valid checkpoint, covering a crash between those two writes.'},
+        {question:'What happens when ffmpeg is not available during final assembly?',answers:['The job fails and all WAV chunks are removed.','The final WAV completes; MP3 absence is reported as a warning.','The app downloads ffmpeg automatically.','Kokoro creates the MP3 instead.'],correct:1,explanation:'MP3 is optional. Checkpoints are combined into a lossless WAV first; missing ffmpeg only prevents the compact MP3.'},
+        {question:'In this repository, what does requested: str do?',answers:['It rejects non-strings before the function runs.','It is a hint for readers and checking tools, not automatic runtime enforcement.','It converts the incoming value into a string.','It creates a Pydantic model.'],correct:1,explanation:'Python stores the annotation, but does not enforce it by itself. This repository has no mypy or Pyright configuration; only libraries that inspect selected hints add runtime behavior.'},
+        {question:'Why does audio.py use with when opening files and WAV handles?',answers:['It makes the operation asynchronous.','It caches the file in memory.','It guarantees teardown even when the block raises.','It converts bytes into text.'],correct:2,explanation:'with uses the context-manager protocol for deterministic setup and cleanup—the Python counterpart of using or a carefully written try/finally.'}
+      ];
+      let quizIndex=0,score=0,answered=false;
+      function renderQuiz(){const item=quiz[quizIndex];answered=false;$('#quiz-progress').innerHTML=quiz.map((_,index)=>`<i class="${index<quizIndex?'done':index===quizIndex?'current':''}"></i>`).join('');$('#quiz-count').textContent=`Question ${quizIndex+1} of ${quiz.length}`;$('#quiz-question').textContent=item.question;$('#quiz-answers').innerHTML=item.answers.map((answer,index)=>`<button class="quiz-answer" type="button" data-answer="${index}"><span class="answer-letter">${String.fromCharCode(65+index)}</span><span>${answer}</span></button>`).join('');$('#quiz-feedback').className='quiz-feedback';$('#quiz-feedback').textContent='';$('#quiz-next').hidden=true;$('#quiz-next').textContent=quizIndex===quiz.length-1?'See my result':'Next question'}
+      function updateScore(){$('#quiz-score').textContent=`${score}/${quiz.length}`;$('#score-ring').style.setProperty('--score-angle',`${score/quiz.length*360}deg`)}
+      $('#quiz-answers').addEventListener('click',event=>{const button=event.target.closest('[data-answer]');if(!button||answered)return;answered=true;const selected=Number(button.dataset.answer),item=quiz[quizIndex];if(selected===item.correct)score++;$$('.quiz-answer',$('#quiz-answers')).forEach((answer,index)=>{answer.disabled=true;if(index===item.correct)answer.classList.add('correct');else if(index===selected)answer.classList.add('incorrect')});const correct=selected===item.correct;$('#quiz-feedback').innerHTML=`<strong>${correct?'Exactly.':'Not quite.'}</strong> ${item.explanation}`;$('#quiz-feedback').classList.add('show');$('#quiz-next').hidden=false;updateScore()});
+      $('#quiz-next').addEventListener('click',()=>{if(quizIndex<quiz.length-1){quizIndex++;renderQuiz();$('#quiz-question').focus({preventScroll:true});return}const percent=Math.round(score/quiz.length*100),strongScore=Math.ceil(quiz.length*.75);$('#quiz-main').innerHTML=`<div class="quiz-complete"><div class="quiz-count">Knowledge check complete</div><h3>${score===quiz.length?'You have the system.':score>=strongScore?'Strong mental model.':'One more pass will make it click.'}</h3><p>You scored <strong>${score} out of ${quiz.length}</strong> (${percent}%). The flow, recovery lab, and Python decoder contain every answer.</p><button class="button" type="button" id="quiz-retry">Try again</button></div>`;$('#score-copy').textContent=score===quiz.length?'You can explain the system and read its core Python patterns.':'Review the flow, recovery, and Python sections, then take another run.';$('#quiz-retry').addEventListener('click',()=>location.reload())});
+      renderQuiz();
+
+      /* Scroll reveal, contextual nav, progress */
+      const tracked=$$('[data-track]'),visited=new Set(),navLinks=$$('.nav-links a');
+      function updateLearn(){const percent=Math.round(visited.size/tracked.length*100);$('#learn-ring').style.setProperty('--visited',`${percent}%`);$('#learn-label').textContent=`${percent}% explored`}
+      if('IntersectionObserver' in window){const revealObserver=new IntersectionObserver(entries=>entries.forEach(entry=>{if(entry.isIntersecting){entry.target.classList.add('visible');revealObserver.unobserve(entry.target)}}),{threshold:.12});$$('.reveal').forEach(element=>revealObserver.observe(element));const sectionObserver=new IntersectionObserver(entries=>entries.forEach(entry=>{if(!entry.isIntersecting)return;visited.add(entry.target.id);updateLearn();navLinks.forEach(link=>link.setAttribute('aria-current',String(link.getAttribute('href')===`#${entry.target.id}`)))}),{rootMargin:'-25% 0px -62% 0px'});tracked.forEach(section=>sectionObserver.observe(section))}else{$$('.reveal').forEach(element=>element.classList.add('visible'))}
+      function updateScroll(){const max=document.documentElement.scrollHeight-innerHeight;$('#scroll-line').style.width=`${max>0?Math.min(100,Math.max(0,scrollY/max*100)):0}%`}
+      addEventListener('scroll',updateScroll,{passive:true});updateScroll();
+    })();
+  </script>
+</body>
+</html>
